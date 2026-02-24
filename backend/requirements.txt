@@ -1,0 +1,25 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+sqlalchemy==2.0.25
+alembic==1.13.1
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv>=0.21.0
+python-multipart==0.0.6
+
+# RAG Dependencies (from RAG-Anything)
+lightrag==0.1.0b6
+
+# For embedding and LLM (configurable)
+openai>=1.0.0
+chromadb>=0.4.22
+
+# For Markdown processing
+markdown==3.5.2
+
+# For async support
+aiosqlite>=0.19.0
+httpx==0.26.0
+
+# For UUID support
+uuid==1.30

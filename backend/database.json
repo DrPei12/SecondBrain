@@ -1,0 +1,49 @@
+{
+  "notes": [
+    {
+      "id": "1",
+      "title": "欢迎使用 Second Brain",
+      "content": "# Welcome to Second Brain\n\n这是一个轻量级的个人知识管理平台。\n\n## 核心功能\n\n- 📝 笔记管理\n- 🏷️ 标签系统\n- 🔍 搜索过滤\n- 🤖 RAG 智能问答\n\n## 使用方法\n\n1. 创建笔记\n2. 添加标签\n3. 浏览和回顾\n4. 智能问答",
+      "summary": null,
+      "tags": [
+        "欢迎",
+        "使用指南"
+      ],
+      "source_url": null,
+      "created_at": "2026-02-07T12:07:57.622Z",
+      "updated_at": "2026-02-07T12:07:57.622Z",
+      "status": "Inbox",
+      "indexed_for_rag": "pending"
+    },
+    {
+      "id": "2",
+      "title": "AI Agent 知识收集流程",
+      "content": "# AI Agent 知识收集\n\n外部 AI Agent 会自动通过 API 推送收集到的知识到本平台。\n\n## 推送格式\n\n```json\n{\n  \"title\": \"笔记标题\",\n  \"content\": \"Markdown 内容\",\n  \"tags\": [\"标签1\", \"标签2\"],\n  \"source_url\": \"https://example.com\"\n}\n```\n\n## 批量推送\n\n支持一次推送多条笔记。",
+      "summary": null,
+      "tags": [
+        "AI",
+        "自动化",
+        "工作流"
+      ],
+      "source_url": null,
+      "created_at": "2026-02-07T11:07:57.622Z",
+      "updated_at": "2026-02-07T11:07:57.622Z",
+      "status": "Inbox",
+      "indexed_for_rag": "pending"
+    },
+    {
+      "id": "489e5e58-f822-43a2-8300-c19fe89f6161",
+      "title": "测试笔记",
+      "content": "这是一条测试笔记",
+      "summary": null,
+      "tags": [
+        "测试"
+      ],
+      "source_url": null,
+      "created_at": "2026-02-07T12:08:37.828Z",
+      "updated_at": "2026-02-07T12:08:37.828Z",
+      "status": "Inbox",
+      "indexed_for_rag": "pending"
+    }
+  ]
+}
