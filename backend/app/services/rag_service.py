@@ -1,5 +1,5 @@
 """
-RAG Service integrating LightRAG from RAG-Anything
+RAG Service integrating LightRAG from HKUDS
 
 This service provides:
 - Vector storage and retrieval
@@ -15,30 +15,19 @@ from sqlalchemy import select
 import asyncio
 import hashlib
 
-# LightRAG imports from RAG-Anything
+# LightRAG imports from HKUDS
 try:
-    from lightrag import LightRAG
-    from lightrag.utils import logger
-    from lightrag import QueryParam
+    from lightrag import LightRAG, QueryParam
+    from lightrag.utils import EmbeddingFunc
+    from sentence_transformers import SentenceTransformer
     LIGHTRAG_AVAILABLE = True
 except ImportError:
     LIGHTRAG_AVAILABLE = False
     LightRAG = None
     QueryParam = None
-    logger = None
+    EmbeddingFunc = None
+    SentenceTransformer = None
 
-# Simple logger wrapper
-def _log_info(msg):
-    if logger:
-        _log_info(msg)
-    else:
-        print(f"[INFO] {msg}")
-
-def _log_error(msg):
-    if logger:
-        _log_error(msg)
-    else:
-        print(f"[ERROR] {msg}")
 
 from app.core.config import settings
 
@@ -47,30 +36,72 @@ class RAGService:
     """
     RAG Service for knowledge base Q&A
     
-    Reuses vector storage, retrieval, and LLM call logic from RAG-Anything
+    Uses HKUDS LightRAG for vector storage, retrieval, and LLM integration
     """
     
     def __init__(self):
         """Initialize RAG service with LightRAG"""
-        self._lightrag: Optional[object] = None
+        self._lightrag: Optional[LightRAG] = None
         self._initialized = False
         self._working_dir = settings.RAG_WORKING_DIR
         self._lightrag_available = LIGHTRAG_AVAILABLE
+        self._embedding_model = None
         
         # Ensure working directory exists
         if self._lightrag_available:
             os.makedirs(self._working_dir, exist_ok=True)
     
+    def _get_embedding_func(self):
+        """Create embedding function using Sentence Transformers"""
+        if not SentenceTransformer or not EmbeddingFunc:
+            return None
+        if self._embedding_model is None:
+            print(f"[RAG] Loading Sentence Transformer model...")
+            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            print(f"[RAG] Model loaded successfully")
+        
+        def embed_func(texts: list[str]) -> list[list[float]]:
+            embeddings = self._embedding_model.encode(texts, convert_to_numpy=True)
+            return embeddings.tolist()
+        
+        return EmbeddingFunc(
+            embedding_dim=384,  # all-MiniLM-L6-v2 dimension
+            func=embed_func,
+            max_token_size=8192
+        )
+    
     def _get_lightrag(self) -> Optional[LightRAG]:
-        """Get or create LightRAG instance"""
+        """Get or create LightRAG instance with embedding function"""
         if not self._lightrag_available or LightRAG is None:
             return None
         if self._lightrag is None:
+            # Load embedding model and create callable function
+            if self._embedding_model is None and SentenceTransformer and EmbeddingFunc:
+                print(f"[RAG] Loading Sentence Transformer model...")
+                self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                print(f"[RAG] Model loaded successfully")
+            
+            if self._embedding_model is None or EmbeddingFunc is None:
+                raise RuntimeError("Failed to load Sentence Transformer model or EmbeddingFunc not available")
+            
+            # Create direct callable embedding function
+            def embed_func(texts: list[str]) -> list[list[float]]:
+                embeddings = self._embedding_model.encode(texts, convert_to_numpy=True)
+                return embeddings.tolist()
+            
+            # Wrap with EmbeddingFunc (LightRAG expects this object with .func attribute)
+            embedding_wrapper = EmbeddingFunc(
+                embedding_dim=384,  # all-MiniLM-L6-v2 dimension
+                func=embed_func,
+                max_token_size=8192
+            )
+            
+            print(f"[RAG] Initializing LightRAG with working_dir: {self._working_dir}")
             self._lightrag = LightRAG(
                 working_dir=self._working_dir,
-                # LightRAG will use default settings
-                # Can be customized with kwargs if needed
+                embedding_func=embedding_wrapper  # Pass EmbeddingFunc wrapper
             )
+            print(f"[RAG] LightRAG initialized successfully")
         return self._lightrag
     
     async def initialize(self):
@@ -80,12 +111,12 @@ class RAGService:
                 self._initialized = True
                 print(f"[RAG Service] LightRAG not available, running in mock mode")
                 return
+            
             # Run in executor for sync LightRAG initialization
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._get_lightrag)
+            lightrag_instance = await loop.run_in_executor(None, self._get_lightrag)
             self._initialized = True
-            if logger:
-                _log_info(f"RAG Service initialized with working_dir: {self._working_dir}")
+            print(f"[RAG Service] LightRAG initialized with working_dir: {self._working_dir}")
     
     def _ensure_initialized(self):
         """Ensure RAG is initialized before operations"""
@@ -101,15 +132,6 @@ class RAGService:
     ) -> Dict[str, Any]:
         """
         Index a single note into the RAG system
-        
-        Args:
-            db: Database session
-            note_id: Note ID
-            title: Note title
-            content: Note content (Markdown)
-            
-        Returns:
-            Indexing result dict
         """
         self._ensure_initialized()
         
@@ -138,20 +160,18 @@ class RAGService:
                 return {"success": False, "error": "Note not found"}
             
             # Prepare content for indexing
-            # Combine title and content
             full_content = f"# {title}\n\n{content}" if content else title
             
             # Create a unique document ID
             doc_id = f"note_{note_id}"
             
-            # Use LightRAG's upsert method to add/update document
+            # Use LightRAG's ainsert method to add document
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None, 
-                lambda: self._lightrag.upsert(
+                lambda: self._lightrag.ainsert(
                     full_content,
-                    ids=doc_id,
-                    extra_info={"note_id": note_id, "title": title}
+                    ids=doc_id
                 )
             )
             
@@ -159,7 +179,7 @@ class RAGService:
             note.indexed_for_rag = "indexed"
             await db.commit()
             
-            _log_info(f"Indexed note {note_id}: {title[:50]}...")
+            print(f"[RAG] Indexed note {note_id}: {title[:50]}...")
             
             return {
                 "success": True,
@@ -168,7 +188,7 @@ class RAGService:
             }
             
         except Exception as e:
-            _log_error(f"Failed to index note {note_id}: {e}")
+            print(f"[RAG ERROR] Failed to index note {note_id}: {e}")
             
             # Mark as failed
             from app.models.note import Note
@@ -194,14 +214,6 @@ class RAGService:
     ) -> Dict[str, Any]:
         """
         Batch index notes for RAG
-        
-        Args:
-            db: Database session
-            note_ids: Specific note IDs (None = all pending)
-            force: Force reindexing of already indexed notes
-            
-        Returns:
-            Indexing results summary
         """
         self._ensure_initialized()
         
@@ -276,33 +288,29 @@ class RAGService:
             # Create query parameters
             if QueryParam is None:
                 raise RuntimeError("QueryParam not available from lightrag")
+            
             query_param = QueryParam(
                 mode=mode,
                 top_k=top_k
             )
             
-            # Execute query
+            # Execute query using LightRAG's aquery method
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: self._lightrag.aquery(query_text, param=query_param)
             )
             
-            # Extract sources if available
-            # LightRAG may return sources in the result metadata
-            sources = []
-            if hasattr(result, 'metadata'):
-                sources = result.metadata.get('sources', [])
-            
+            # LightRAG returns string answer
             return {
                 "query": query_text,
                 "answer": result if isinstance(result, str) else str(result),
-                "sources": sources,
+                "sources": [],
                 "mode": mode
             }
             
         except Exception as e:
-            _log_error(f"RAG query failed: {e}")
+            print(f"[RAG ERROR] Query failed: {e}")
             return {
                 "query": query_text,
                 "answer": f"Error processing query: {str(e)}",
@@ -314,12 +322,6 @@ class RAGService:
     async def delete_document(self, note_id: str) -> bool:
         """
         Delete a document from RAG index
-        
-        Args:
-            note_id: Note ID to delete
-            
-        Returns:
-            True if successful
         """
         self._ensure_initialized()
         
@@ -333,40 +335,38 @@ class RAGService:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
-                lambda: self._lightrag.delete(doc_id)
+                lambda: self._lightrag.adelete_by_doc_id(doc_id)
             )
             
-            _log_info(f"Deleted document for note {note_id}")
+            print(f"[RAG] Deleted document for note {note_id}")
             return True
             
         except Exception as e:
-            _log_error(f"Failed to delete document for note {note_id}: {e}")
+            print(f"[RAG ERROR] Failed to delete document for note {note_id}: {e}")
             return False
     
     async def get_index_stats(self) -> Dict[str, Any]:
         """
         Get RAG indexing statistics
-        
-        Returns:
-            Statistics about the indexed knowledge base
         """
         self._ensure_initialized()
         
         try:
-            # LightRAG may have methods to get stats
             stats = {
                 "working_dir": self._working_dir,
                 "initialized": self._initialized,
+                "lightrag_available": self._lightrag_available,
             }
             
-            # Try to get document count if method exists
-            if hasattr(self._lightrag, 'get_stats'):
-                stats.update(self._lightrag.get_stats())
+            # Try to get document count from working directory
+            if os.path.exists(self._working_dir):
+                file_count = len(list(Path(self._working_dir).glob("**/*")))
+                stats["file_count"] = file_count
             
             return stats
             
         except Exception as e:
-            _log_error(f"Failed to get RAG stats: {e}")
+            print(f"[RAG ERROR] Failed to get stats: {e}")
             return {
                 "error": str(e),
                 "working_dir": self._working_dir,
@@ -377,11 +377,10 @@ class RAGService:
         """Cleanup RAG resources"""
         if self._lightrag:
             try:
-                # LightRAG may have cleanup methods
                 if hasattr(self._lightrag, 'close'):
                     await self._lightrag.close()
             except Exception as e:
-                _log_error(f"Error closing RAG: {e}")
+                print(f"[RAG ERROR] Error closing: {e}")
             finally:
                 self._lightrag = None
                 self._initialized = False

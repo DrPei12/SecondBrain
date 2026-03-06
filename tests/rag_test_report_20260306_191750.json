@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-03-06T19:17:55+08:00",
+  "summary": {
+    "total_queries": 6,
+    "avg_latency_ms": 9,
+    "indexed_files": 16,
+    "failed_files": 2
+  },
+  "results": [
+    {"query":"ErrorPare Phase 2.1 完成了哪些功能","category":"project_status","latency_ms":11,"answer_length":55},{"query":"GitHub Token 是什么","category":"credentials","latency_ms":10,"answer_length":44},{"query":"Cherry Sub-agent 连接问题","category":"technical_issue","latency_ms":9,"answer_length":49},{"query":"SecondBrain 项目架构","category":"architecture","latency_ms":11,"answer_length":44},{"query":"Evan 的能力配置","category":"capabilities","latency_ms":9,"answer_length":38},{"query":"CEO 的偏好设置","category":"preferences","latency_ms":9,"answer_length":37}
+  ]
+}
