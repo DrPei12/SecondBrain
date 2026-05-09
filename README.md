@@ -107,6 +107,61 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+### Product RAG Setup
+
+SecondBrain now uses a real OpenAI-compatible RAG path in production:
+notes are chunked, embedded, stored in a local JSON vector index, retrieved by
+cosine similarity, and answered by the configured chat model with source
+citations. Mock answers are not returned by the FastAPI RAG service.
+
+For Bailian / DashScope validation:
+
+```bash
+cd backend
+cp .env.example .env
+
+# Required private values. Do not commit .env.
+SECOND_BRAIN_API_KEY=dev-api-key
+LLM_PROVIDER=bailian
+DASHSCOPE_API_KEY=your-dashscope-key
+BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+BAILIAN_LLM_MODEL=qwen3.6-plus
+BAILIAN_ENABLE_THINKING=false
+BAILIAN_EMBEDDING_MODEL=text-embedding-v4
+BAILIAN_EMBEDDING_DIMENSIONS=1024
+```
+
+Useful RAG commands:
+
+```bash
+cd backend
+secondbrain-rag stats
+secondbrain-rag index --force
+secondbrain-rag query "What did I write about Agent learning?"
+```
+
+Smoke test against an already running backend:
+
+```bash
+SECOND_BRAIN_API_KEY=dev-api-key python tests/test_rag_performance.py
+```
+
+REST API:
+
+- `POST /api/rag/query` returns `answer`, `sources`, `provider`, `engine`, `elapsed_ms`, and `mock=false`.
+- `POST /api/rag/index` indexes pending notes or requested note IDs.
+- `POST /api/rag/rebuild` rebuilds the full local vector index from notes.
+- `POST /api/rag/document/{note_id}/reindex` reindexes one note.
+- `DELETE /api/rag/document/{note_id}` removes one note from the RAG index.
+- `GET /api/rag/health` and `GET /api/health/ready` expose real readiness.
+
+The local vector store lives at `RAG_VECTOR_STORE_FILE` and is regenerated when
+the configured embedding model or dimension changes.
+
+Security note: keep provider keys in local environment variables, deployment
+secrets, or `.env` files excluded from git. Rotate any key that has been shared
+in chat, logs, screenshots, or issue trackers before release.
+
 ### Frontend Setup
 
 ```bash

@@ -25,12 +25,29 @@ class RAGQueryRequest(BaseModel):
     }
 
 
+class RAGSource(BaseModel):
+    """Source chunk returned by RAG retrieval."""
+    id: str = Field(..., description="Source note ID for frontend compatibility")
+    note_id: str
+    chunk_id: Optional[str] = None
+    title: str
+    snippet: str = ""
+    relevance: float = Field(default=0.0, ge=0.0, le=1.0)
+    score: Optional[float] = None
+    chunk_index: Optional[int] = None
+    source_url: Optional[str] = None
+
+
 class RAGQueryResponse(BaseModel):
     """Schema for RAG query response"""
     query: str
     answer: str
-    sources: List[dict] = Field(default_factory=list, description="Source notes used")
+    sources: List[RAGSource] = Field(default_factory=list, description="Source notes used")
     mode: str
+    engine: Optional[str] = None
+    provider: Optional[str] = None
+    elapsed_ms: Optional[float] = None
+    mock: bool = False
 
 
 class RAGIndexRequest(BaseModel):
@@ -51,3 +68,6 @@ class RAGIndexResponse(BaseModel):
     failed_count: int
     status: str
     message: str
+    indexed_ids: List[str] = Field(default_factory=list)
+    failed_ids: List[str] = Field(default_factory=list)
+    errors: dict = Field(default_factory=dict)

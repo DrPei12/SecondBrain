@@ -1,481 +1,413 @@
 """
-RAG Service integrating LightRAG from HKUDS
+Product RAG service for SecondBrain.
 
-This service provides:
-- Vector storage and retrieval
-- LLM integration for Q&A
-- Automatic note indexing
+The primary path is a real OpenAI-compatible vector RAG pipeline:
+notes -> chunks -> embeddings -> cosine retrieval -> grounded LLM answer.
+LightRAG remains available as an optional engine for graph-enhanced indexing.
 """
-import os
-from typing import List, Optional, Dict, Any
-from pathlib import Path
-from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-import asyncio
-import hashlib
+from __future__ import annotations
 
-# LightRAG imports from HKUDS
-# Note: sentence_transformers import can hang, so we use lazy loading
+import asyncio
+import os
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.services.llm_provider import OpenAICompatibleProvider
+from app.services.vector_store import JsonVectorStore, chunk_note_text
+
 try:
     from lightrag import LightRAG, QueryParam
     from lightrag.utils import EmbeddingFunc
-    from lightrag.llm.openai import openai_complete
+
     LIGHTRAG_AVAILABLE = True
-    # Lazy load sentence_transformers to avoid hanging on import
-    SentenceTransformer = None
-    _st_import_attempted = False
 except ImportError:
-    LIGHTRAG_AVAILABLE = False
     LightRAG = None
     QueryParam = None
     EmbeddingFunc = None
-    SentenceTransformer = None
-    openai_complete = None
-
-
-async def mock_llm_complete(
-    prompt,
-    system_prompt=None,
-    history_messages=None,
-    **kwargs
-):
-    """Mock LLM function for development/testing without API key"""
-    return "[Mock LLM] This is a mock response. Configure OPENAI_API_KEY for real LLM features."
-
-
-from app.core.config import settings
-
-
-def _load_sentence_transformer():
-    """Lazy load SentenceTransformer with timeout protection"""
-    global SentenceTransformer, _st_import_attempted
-
-    if _st_import_attempted:
-        return SentenceTransformer
-
-    if SentenceTransformer is not None:
-        return SentenceTransformer
-
-    _st_import_attempted = True
-    try:
-        import threading
-        import time
-
-        result = [None]
-        exception = [None]
-
-        def import_thread():
-            try:
-                from sentence_transformers import SentenceTransformer as ST
-                result[0] = ST
-            except Exception as e:
-                exception[0] = e
-
-        t = threading.Thread(target=import_thread)
-        t.daemon = True
-        t.start()
-        t.join(timeout=10.0)  # 10 second timeout
-
-        if t.is_alive():
-            print("[RAG] ⚠️ SentenceTransformer import timed out, disabling embedding")
-            return None
-
-        if exception[0]:
-            print(f"[RAG] ⚠️ SentenceTransformer import failed: {exception[0]}")
-            return None
-
-        SentenceTransformer = result[0]
-        print("[RAG] ✅ SentenceTransformer loaded successfully")
-        return SentenceTransformer
-
-    except Exception as e:
-        print(f"[RAG] ⚠️ Failed to load SentenceTransformer: {e}")
-        return None
+    LIGHTRAG_AVAILABLE = False
 
 
 class RAGService:
-    """
-    RAG Service for knowledge base Q&A
+    """RAG facade used by API routes, CLI, and note lifecycle hooks."""
 
-    Uses HKUDS LightRAG for vector storage, retrieval, and LLM integration
-    """
-
-    def __init__(self):
-        """Initialize RAG service with LightRAG"""
-        self._lightrag: Optional[LightRAG] = None
+    def __init__(self) -> None:
         self._initialized = False
         self._working_dir = settings.RAG_WORKING_DIR
+        self._engine = settings.RAG_ENGINE.strip().lower() or "vector"
+        self._provider: OpenAICompatibleProvider | None = None
+        self._vector_store: JsonVectorStore | None = None
+        self._lightrag: Optional[LightRAG] = None
         self._lightrag_available = LIGHTRAG_AVAILABLE
-        self._embedding_model = None
-        self._degraded_reason: Optional[str] = None
+        self._degraded_reason: str | None = None
+        self._lock = asyncio.Lock()
 
-        # Ensure working directory exists
-        if self._lightrag_available:
-            os.makedirs(self._working_dir, exist_ok=True)
+    async def initialize(self) -> None:
+        """Initialize provider, local vector store, and optional LightRAG."""
+        if self._initialized:
+            return
 
-    def _get_embedding_func(self):
-        """Create embedding function using Sentence Transformers"""
-        # Lazy load SentenceTransformer
-        ST = _load_sentence_transformer()
-        if not ST or not EmbeddingFunc:
-            return None
-        if self._embedding_model is None:
-            print(f"[RAG] Loading Sentence Transformer model...")
-            self._embedding_model = ST('all-MiniLM-L6-v2')
-            print(f"[RAG] Model loaded successfully")
+        os.makedirs(self._working_dir, exist_ok=True)
+        self._provider = OpenAICompatibleProvider()
+        self._vector_store = JsonVectorStore(
+            settings.RAG_VECTOR_STORE_FILE,
+            embedding_model=self._provider.status.embedding_model,
+            dimensions=self._provider.status.embedding_dimensions,
+        )
+        self._vector_store.load()
+
+        if not self._provider.configured:
+            self._degraded_reason = (
+                "Model provider is not configured; set DASHSCOPE_API_KEY for "
+                "Bailian or OPENAI_API_KEY for OpenAI"
+            )
+        else:
+            self._degraded_reason = None
+
+        if self._engine in {"lightrag", "hybrid"}:
+            await self._initialize_lightrag()
+
+        self._initialized = True
+
+    async def _initialize_lightrag(self) -> None:
+        if not self._provider or not self._provider.configured:
+            return
+        if not self._lightrag_available or LightRAG is None or EmbeddingFunc is None:
+            self._degraded_reason = "LightRAG is not installed"
+            return
 
         async def embed_func(texts: list[str]):
-            return await asyncio.to_thread(
-                self._embedding_model.encode,
-                texts,
-                convert_to_numpy=True,
-            )
+            embeddings = await self._provider.embed_texts(texts)
+            try:
+                import numpy as np
 
-        return EmbeddingFunc(
-            embedding_dim=384,  # all-MiniLM-L6-v2 dimension
-            func=embed_func,
-            max_token_size=8192
-        )
+                return np.array(embeddings, dtype="float32")
+            except Exception:
+                return embeddings
 
-    def _get_lightrag(self) -> Optional[LightRAG]:
-        """Get or create LightRAG instance with embedding function"""
-        if not self._lightrag_available or LightRAG is None:
-            return None
-        if self._lightrag is None:
-            # Lazy load embedding model
-            ST = _load_sentence_transformer()
-            if self._embedding_model is None and ST and EmbeddingFunc:
-                print(f"[RAG] Loading Sentence Transformer model...")
-                self._embedding_model = ST('all-MiniLM-L6-v2')
-                print(f"[RAG] Model loaded successfully")
+        async def llm_func(
+            prompt: str,
+            system_prompt: str | None = None,
+            history_messages: list[dict[str, str]] | None = None,
+            **_: Any,
+        ) -> str:
+            messages: list[dict[str, str]] = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.extend(history_messages or [])
+            messages.append({"role": "user", "content": prompt})
+            return await self._provider.chat(messages, temperature=0.0)
 
-            if self._embedding_model is None or EmbeddingFunc is None:
-                print("[RAG] ⚠️ Running without embedding model - vector search disabled")
-                return None
-
-            # Create direct callable embedding function
-            async def embed_func(texts: list[str]):
-                return await asyncio.to_thread(
-                    self._embedding_model.encode,
-                    texts,
-                    convert_to_numpy=True,
-                )
-
-            # Wrap with EmbeddingFunc (LightRAG expects this object with .func attribute)
+        try:
             embedding_wrapper = EmbeddingFunc(
-                embedding_dim=384,  # all-MiniLM-L6-v2 dimension
+                embedding_dim=self._provider.status.embedding_dimensions,
                 func=embed_func,
-                max_token_size=8192
+                max_token_size=8192,
+                model_name=self._provider.status.embedding_model,
             )
-
-            # Configure LLM model function if OpenAI API key is available
-            llm_func = mock_llm_complete  # Default to mock
-            llm_model_name = "mock-model"
-
-            openai_api_key = os.getenv("OPENAI_API_KEY", "")
-            if openai_api_key and openai_api_key != "your-api-key-here" and openai_complete:
-                # Set OpenAI API key in environment for the llm module
-                os.environ["OPENAI_API_KEY"] = openai_api_key
-                llm_func = openai_complete
-                llm_model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
-                print(f"[RAG] ✅ Using OpenAI LLM: {llm_model_name}")
-            else:
-                print(f"[RAG] ⚠️  OPENAI_API_KEY not configured, using mock LLM (embedding-only mode)")
-
-            print(f"[RAG] Initializing LightRAG with working_dir: {self._working_dir}")
             self._lightrag = LightRAG(
                 working_dir=self._working_dir,
-                embedding_func=embedding_wrapper,  # Pass EmbeddingFunc wrapper
+                embedding_func=embedding_wrapper,
                 llm_model_func=llm_func,
-                llm_model_name=llm_model_name
+                llm_model_name=self._provider.status.llm_model,
             )
-            print(f"[RAG] ✅ LightRAG initialized successfully (LLM: {llm_model_name})")
-        return self._lightrag
+            if hasattr(self._lightrag, "initialize_storages"):
+                await self._lightrag.initialize_storages()
+        except Exception as exc:
+            self._lightrag = None
+            self._degraded_reason = f"LightRAG initialization failed: {exc}"
 
-    async def initialize(self):
-        """Initialize the RAG system"""
-        if not self._initialized:
-            if not self._lightrag_available:
-                self._initialized = True
-                self._degraded_reason = "LightRAG import failed"
-                print(f"[RAG Service] LightRAG not available, running in mock mode")
-                return
-
-            # Load heavy sync dependencies off the event loop, then initialize async storages.
-            lightrag_instance = await asyncio.to_thread(self._get_lightrag)
-            if lightrag_instance and hasattr(lightrag_instance, "initialize_storages"):
-                await lightrag_instance.initialize_storages()
-            self._initialized = True
-            self._degraded_reason = None if lightrag_instance else "Embedding model unavailable"
-            print(f"[RAG Service] LightRAG initialized with working_dir: {self._working_dir}")
-
-    def mark_degraded(self, reason: str):
-        """Keep API endpoints available when startup RAG initialization fails."""
-        self._lightrag = None
+    def mark_degraded(self, reason: str) -> None:
+        """Keep API endpoints alive while reporting a real not-ready state."""
         self._initialized = True
         self._degraded_reason = reason
 
-    def _ensure_initialized(self):
-        """Ensure RAG is initialized before operations"""
+    def _ensure_initialized(self) -> None:
         if not self._initialized:
             raise RuntimeError("RAG Service not initialized. Call initialize() first.")
+
+    def _ensure_ready(self) -> None:
+        self._ensure_initialized()
+        if not self._provider or not self._provider.configured:
+            provider = self._provider.status.provider if self._provider else "unknown"
+            raise RuntimeError(f"RAG model provider is not configured: {provider}")
+        if not self._vector_store:
+            raise RuntimeError("RAG vector store is not initialized")
 
     async def index_note(
         self,
         db: AsyncSession,
         note_id: str,
         title: str,
-        content: str
-    ) -> Dict[str, Any]:
-        """
-        Index a single note into the RAG system
-        """
+        content: str,
+    ) -> dict[str, Any]:
+        """Index one note into the local vector store and optional LightRAG."""
         self._ensure_initialized()
 
-        # If LightRAG is not available, return mock success
-        if not self._lightrag_available or self._lightrag is None:
-            from app.models.note import Note
-            result = await db.execute(
-                select(Note).where(Note.id == note_id)
-            )
-            note = result.scalar_one_or_none()
-            if note:
-                note.indexed_for_rag = "mock"
-                await db.commit()
-            return {"success": True, "note_id": note_id, "doc_id": f"note_{note_id}_mock", "mock": True}
+        from app.models.note import Note
 
-        try:
-            from app.models.note import Note
+        result = await db.execute(select(Note).where(Note.id == note_id))
+        note = result.scalar_one_or_none()
+        if not note:
+            return {"success": False, "note_id": note_id, "error": "Note not found"}
 
-            # Check if note exists
-            result = await db.execute(
-                select(Note).where(Note.id == note_id)
-            )
-            note = result.scalar_one_or_none()
-
-            if not note:
-                return {"success": False, "error": "Note not found"}
-
-            # Prepare content for indexing
-            full_content = f"# {title}\n\n{content}" if content else title
-
-            # Create a unique document ID
-            doc_id = f"note_{note_id}"
-
-            # Use LightRAG's async insert method to add document.
-            await self._lightrag.ainsert(
-                full_content,
-                ids=doc_id,
-            )
-
-            # Mark as indexed
-            note.indexed_for_rag = "indexed"
+        if not self._provider or not self._provider.configured or not self._vector_store:
+            note.indexed_for_rag = "pending"
             await db.commit()
-
-            print(f"[RAG] Indexed note {note_id}: {title[:50]}...")
-
-            return {
-                "success": True,
-                "note_id": note_id,
-                "doc_id": doc_id
-            }
-
-        except Exception as e:
-            print(f"[RAG ERROR] Failed to index note {note_id}: {e}")
-
-            # Mark as failed
-            from app.models.note import Note
-            result = await db.execute(
-                select(Note).where(Note.id == note_id)
-            )
-            note = result.scalar_one_or_none()
-            if note:
-                note.indexed_for_rag = "failed"
-                await db.commit()
-
             return {
                 "success": False,
                 "note_id": note_id,
-                "error": str(e)
+                "error": self._degraded_reason or "RAG provider is not configured",
+            }
+
+        try:
+            note.indexed_for_rag = "indexing"
+            await db.commit()
+
+            chunks = chunk_note_text(
+                title,
+                content or "",
+                chunk_size=settings.RAG_CHUNK_SIZE,
+                chunk_overlap=settings.RAG_CHUNK_OVERLAP,
+            )
+            if not chunks:
+                raise RuntimeError("Note has no indexable content")
+
+            embeddings = await self._provider.embed_texts(chunks)
+
+            async with self._lock:
+                chunk_count = self._vector_store.upsert_note(
+                    note_id=note_id,
+                    title=title,
+                    content=content or "",
+                    tags=note.tags or [],
+                    source_url=note.source_url,
+                    chunk_size=settings.RAG_CHUNK_SIZE,
+                    chunk_overlap=settings.RAG_CHUNK_OVERLAP,
+                    embeddings=embeddings,
+                )
+
+            lightrag_warning: str | None = None
+            if self._lightrag is not None:
+                try:
+                    await self._lightrag.ainsert(
+                        f"# {title}\n\n{content or ''}",
+                        ids=f"note_{note_id}",
+                    )
+                except Exception as exc:
+                    lightrag_warning = str(exc)
+
+            note.indexed_for_rag = "indexed"
+            await db.commit()
+            return {
+                "success": True,
+                "note_id": note_id,
+                "doc_id": f"note_{note_id}",
+                "chunk_count": chunk_count,
+                "lightrag_warning": lightrag_warning,
+                "mock": False,
+            }
+        except Exception as exc:
+            note.indexed_for_rag = "failed"
+            await db.commit()
+            return {
+                "success": False,
+                "note_id": note_id,
+                "error": str(exc),
+                "mock": False,
             }
 
     async def index_notes_batch(
         self,
         db: AsyncSession,
-        note_ids: Optional[List[str]] = None,
-        force: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Batch index notes for RAG
-        """
+        note_ids: Optional[list[str]] = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Index pending notes or a requested note set."""
         self._ensure_initialized()
 
         from app.services.note_service import note_service
 
-        # Get notes to index
-        notes = await note_service.get_notes_for_rag_indexing(
-            db, note_ids=note_ids, force=force
-        )
+        provider_ready = bool(self._provider and self._provider.configured)
+        if force and not note_ids and self._vector_store and provider_ready:
+            async with self._lock:
+                self._vector_store.reset()
 
+        notes = await note_service.get_notes_for_rag_indexing(
+            db,
+            note_ids=note_ids,
+            force=force,
+        )
         if not notes:
             return {
                 "indexed_count": 0,
                 "failed_count": 0,
+                "indexed_ids": [],
+                "failed_ids": [],
                 "status": "complete",
-                "message": "No notes to index"
+                "message": "No notes to index",
             }
 
-        indexed_ids = []
-        failed_ids = []
+        indexed_ids: list[str] = []
+        failed_ids: list[str] = []
+        errors: dict[str, str] = {}
 
         for note in notes:
             result = await self.index_note(
                 db,
                 note_id=note.id,
                 title=note.title,
-                content=note.content or ""
+                content=note.content or "",
             )
-
             if result.get("success"):
                 indexed_ids.append(note.id)
             else:
                 failed_ids.append(note.id)
+                errors[note.id] = result.get("error", "Unknown indexing error")
 
         return {
             "indexed_count": len(indexed_ids),
             "failed_count": len(failed_ids),
-            "status": "complete",
-            "message": f"Indexed {len(indexed_ids)} notes, {len(failed_ids)} failed"
+            "indexed_ids": indexed_ids,
+            "failed_ids": failed_ids,
+            "errors": errors,
+            "status": "complete" if not failed_ids else "partial",
+            "message": f"Indexed {len(indexed_ids)} notes, {len(failed_ids)} failed",
         }
 
     async def query(
         self,
         query_text: str,
         mode: str = "mix",
-        top_k: int = 5
-    ) -> Dict[str, Any]:
-        """
-        Query the RAG knowledge base
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        """Query the indexed knowledge base and return grounded sources."""
+        started = time.perf_counter()
+        self._ensure_ready()
+        assert self._provider is not None
+        assert self._vector_store is not None
 
-        Args:
-            query_text: Natural language query
-            mode: Query mode (local, global, hybrid, naive, mix, bypass)
-            top_k: Number of results to retrieve
+        query_embedding = (await self._provider.embed_texts([query_text]))[0]
+        matches = self._vector_store.search(query_embedding, top_k=top_k)
 
-        Returns:
-            Query result with answer and sources
-        """
-        self._ensure_initialized()
-
-        # If LightRAG is not available, return mock response
-        if not self._lightrag_available or self._lightrag is None:
+        if not matches:
             return {
                 "query": query_text,
-                "answer": f"[Mock] RAG query processed: {query_text}",
+                "answer": "No relevant indexed notes were found for this question.",
                 "sources": [],
                 "mode": mode,
-                "mock": True
+                "engine": self._engine,
+                "provider": self._provider.status.provider,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                "mock": False,
             }
 
-        try:
-            # Create query parameters
-            if QueryParam is None:
-                raise RuntimeError("QueryParam not available from lightrag")
+        context = "\n\n".join(
+            f"[{idx}] {item['title']} (note_id={item['note_id']})\n{item['text']}"
+            for idx, item in enumerate(matches, 1)
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are SecondBrain RAG. Answer only from the provided "
+                    "notes. If the notes are insufficient, say what is missing. "
+                    "Cite sources inline like [1], [2]."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Question:\n{query_text}\n\nNotes:\n{context}",
+            },
+        ]
+        answer = await self._provider.chat(messages, temperature=0.1)
 
-            query_param = QueryParam(
-                mode=mode,
-                top_k=top_k
-            )
-
-            # Execute query using LightRAG's async query method.
-            result = await self._lightrag.aquery(query_text, param=query_param)
-
-            # LightRAG returns string answer
-            return {
-                "query": query_text,
-                "answer": result if isinstance(result, str) else str(result),
-                "sources": [],
-                "mode": mode
+        sources = [
+            {
+                "id": item["note_id"],
+                "note_id": item["note_id"],
+                "chunk_id": item["id"],
+                "title": item["title"],
+                "snippet": item["snippet"],
+                "relevance": item["relevance"],
+                "score": item["score"],
+                "chunk_index": item["chunk_index"],
+                "source_url": item["source_url"],
             }
+            for item in matches
+        ]
 
-        except Exception as e:
-            print(f"[RAG ERROR] Query failed: {e}")
-            return {
-                "query": query_text,
-                "answer": f"Error processing query: {str(e)}",
-                "sources": [],
-                "mode": mode,
-                "error": str(e)
-            }
+        return {
+            "query": query_text,
+            "answer": answer,
+            "sources": sources,
+            "mode": mode,
+            "engine": self._engine,
+            "provider": self._provider.status.provider,
+            "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+            "mock": False,
+        }
 
     async def delete_document(self, note_id: str) -> bool:
-        """
-        Delete a document from RAG index
-        """
+        """Delete a note from vector and optional LightRAG indexes."""
         self._ensure_initialized()
+        removed = 0
+        if self._vector_store:
+            async with self._lock:
+                removed = self._vector_store.delete_note(note_id)
 
-        # If LightRAG is not available, return mock success
-        if not self._lightrag_available or self._lightrag is None:
-            return True
+        if self._lightrag is not None:
+            try:
+                await self._lightrag.adelete_by_doc_id(f"note_{note_id}")
+            except Exception:
+                pass
 
-        try:
-            doc_id = f"note_{note_id}"
+        return removed > 0 or self._lightrag is not None
 
-            await self._lightrag.adelete_by_doc_id(doc_id)
-
-            print(f"[RAG] Deleted document for note {note_id}")
-            return True
-
-        except Exception as e:
-            print(f"[RAG ERROR] Failed to delete document for note {note_id}: {e}")
-            return False
-
-    async def get_index_stats(self) -> Dict[str, Any]:
-        """
-        Get RAG indexing statistics
-        """
+    async def get_index_stats(self) -> dict[str, Any]:
+        """Return real readiness and index statistics."""
         self._ensure_initialized()
-
-        try:
-            stats = {
-                "working_dir": self._working_dir,
-                "initialized": self._initialized,
-                "lightrag_available": self._lightrag_available,
-                "lightrag_ready": self._lightrag is not None,
-                "degraded_reason": self._degraded_reason,
+        provider_status = self._provider.status if self._provider else None
+        stats: dict[str, Any] = {
+            "working_dir": self._working_dir,
+            "engine": self._engine,
+            "initialized": self._initialized,
+            "ready": bool(self._provider and self._provider.configured and self._vector_store),
+            "degraded_reason": self._degraded_reason,
+            "mock": False,
+            "lightrag_available": self._lightrag_available,
+            "lightrag_ready": self._lightrag is not None,
+        }
+        if provider_status:
+            stats["provider"] = {
+                "name": provider_status.provider,
+                "configured": provider_status.configured,
+                "base_url": provider_status.base_url,
+                "llm_model": provider_status.llm_model,
+                "embedding_model": provider_status.embedding_model,
+                "embedding_dimensions": provider_status.embedding_dimensions,
+                "thinking_enabled": provider_status.thinking_enabled,
             }
+        if self._vector_store:
+            stats["vector_store"] = self._vector_store.stats()
+        if os.path.exists(self._working_dir):
+            stats["working_dir_file_count"] = len(list(Path(self._working_dir).glob("**/*")))
+        return stats
 
-            # Try to get document count from working directory
-            if os.path.exists(self._working_dir):
-                file_count = len(list(Path(self._working_dir).glob("**/*")))
-                stats["file_count"] = file_count
-
-            return stats
-
-        except Exception as e:
-            print(f"[RAG ERROR] Failed to get stats: {e}")
-            return {
-                "error": str(e),
-                "working_dir": self._working_dir,
-                "initialized": self._initialized
-            }
-
-    async def close(self):
-        """Cleanup RAG resources"""
+    async def close(self) -> None:
         if self._lightrag:
             try:
-                if hasattr(self._lightrag, 'finalize_storages'):
+                if hasattr(self._lightrag, "finalize_storages"):
                     await self._lightrag.finalize_storages()
-                elif hasattr(self._lightrag, 'close'):
+                elif hasattr(self._lightrag, "close"):
                     await self._lightrag.close()
-            except Exception as e:
-                print(f"[RAG ERROR] Error closing: {e}")
             finally:
                 self._lightrag = None
-                self._initialized = False
-                self._degraded_reason = None
+        self._initialized = False
 
 
-# Singleton instance
 rag_service = RAGService()

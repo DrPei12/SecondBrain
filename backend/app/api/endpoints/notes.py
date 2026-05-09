@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.connection import get_db
 from app.services.note_service import note_service
+from app.services.rag_service import rag_service
 from app.schemas.note import (
     NoteCreate,
     NoteUpdate,
@@ -21,6 +22,21 @@ from app.schemas.note import (
 router = APIRouter()
 
 
+async def _sync_note_to_rag(db: AsyncSession, note) -> None:
+    """Best-effort write-through indexing for note lifecycle events."""
+    try:
+        await rag_service.index_note(
+            db,
+            note_id=note.id,
+            title=note.title,
+            content=note.content or "",
+        )
+    except RuntimeError:
+        # RAG may be intentionally unconfigured in development; keep the note
+        # pending so it can be indexed when provider settings are available.
+        return
+
+
 @router.post("/", response_model=NoteResponse)
 async def create_note(
     note_data: NoteCreate,
@@ -28,6 +44,7 @@ async def create_note(
 ):
     """Create a new note"""
     note = await note_service.create_note(db, note_data)
+    await _sync_note_to_rag(db, note)
     return note
 
 
@@ -38,6 +55,8 @@ async def create_notes_batch(
 ):
     """Create multiple notes in batch (for AI agents)"""
     created, failed = await note_service.create_notes_batch(db, batch_data.notes)
+    for note in created:
+        await _sync_note_to_rag(db, note)
     return BatchNoteResponse(
         created=[note.to_dict() for note in created],
         failed=failed,
@@ -96,6 +115,8 @@ async def update_note(
     note = await note_service.update_note(db, note_id, update_data)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    if update_data.title is not None or update_data.content is not None:
+        await _sync_note_to_rag(db, note)
     return note
 
 
@@ -105,6 +126,13 @@ async def delete_note(
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a note"""
+    note = await note_service.get_note_by_id(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    try:
+        await rag_service.delete_document(note_id)
+    except RuntimeError:
+        pass
     deleted = await note_service.delete_note(db, note_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found")
