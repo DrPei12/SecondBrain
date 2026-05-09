@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Save } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
 
 export default function NewNote() {
   const router = useRouter();
@@ -20,7 +21,7 @@ export default function NewNote() {
 
     setSaving(true);
     try {
-      const res = await fetch('http://localhost:8000/api/notes', {
+      const res = await apiFetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

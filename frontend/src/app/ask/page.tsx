@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, Send, Sparkles, BookOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { apiFetch } from '@/lib/api';
 
 interface Source {
   id: string;
@@ -28,7 +29,7 @@ export default function AskAI() {
     
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/rag/query', {
+      const res = await apiFetch('/api/rag/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

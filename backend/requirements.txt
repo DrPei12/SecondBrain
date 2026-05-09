@@ -7,8 +7,9 @@ pydantic-settings==2.1.0
 python-dotenv>=0.21.0
 python-multipart==0.0.6
 
-# RAG Dependencies (from RAG-Anything)
-lightrag==0.1.0b6
+# RAG Dependencies (HKUDS LightRAG)
+lightrag-hku==1.4.11
+sentence-transformers>=2.7.0
 
 # For embedding and LLM (configurable)
 openai>=1.0.0

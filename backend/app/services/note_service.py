@@ -24,7 +24,7 @@ class NoteService:
             content=note_data.content,
             tags=note_data.tags,
             source_url=note_data.source_url,
-            status=NoteStatus.INBOX,
+            status=NoteStatus.INBOX.value,
             indexed_for_rag="pending"
         )
         
@@ -80,7 +80,9 @@ class NoteService:
         
         # Apply filters
         if filters.status:
-            query = query.where(Note.status == NoteStatus(filters.status))
+            query = query.where(
+                Note.status.in_([filters.status.value, filters.status.name])
+            )
         
         if filters.tags:
             for tag in filters.tags:
@@ -120,6 +122,10 @@ class NoteService:
             return None
         
         update_dict = update_data.model_dump(exclude_unset=True)
+        if "status" in update_dict and update_dict["status"] is not None:
+            incoming_status = update_dict["status"]
+            if hasattr(incoming_status, "value"):
+                update_dict["status"] = incoming_status.value
         
         for field, value in update_dict.items():
             setattr(note, field, value)
@@ -159,9 +165,7 @@ class NoteService:
         if note_ids:
             query = query.where(Note.id.in_(note_ids))
         else:
-            if force:
-                query = query.where(Note.indexed_for_rag.in_(["pending", "failed"]))
-            else:
+            if not force:
                 query = query.where(Note.indexed_for_rag == "pending")
         
         query = query.order_by(Note.created_at.desc())

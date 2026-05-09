@@ -3,14 +3,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Search, Plus, BookOpen, Settings, Sparkles } from 'lucide-react';
-
-// Backend API URL - configurable via environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, apiUrl } from '@/lib/api';
 
 interface Note {
   id: string;
   title: string;
-  content: string;
+  content: string | null;
   tags: string[];
   status: string;
   created_at: string;
@@ -19,6 +17,7 @@ interface Note {
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [search, setSearch] = useState('');
+  const [showMemory, setShowMemory] = useState(false); // 默认隐藏 memory 标签
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,12 +25,15 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
-      console.log(`Fetching from: ${API_URL}/api/notes?page_size=50`);
-      const res = await fetch(`${API_URL}/api/notes?page_size=50`);
+      const url = '/api/notes/?page_size=100';
+      console.log(`Fetching from: ${url}`);
+      const res = await apiFetch(url, { redirect: 'follow' });
+      console.log(`Response status: ${res.status}`);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
       const data = await res.json();
+      console.log(`Received ${data.items?.length || 0} notes`);
       setNotes(data.items || []);
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to fetch notes';
@@ -46,11 +48,20 @@ export default function Home() {
     fetchNotes();
   }, [fetchNotes]);
 
-  const filteredNotes = notes.filter(note =>
-    note.title.toLowerCase().includes(search.toLowerCase()) ||
-    note.content.toLowerCase().includes(search.toLowerCase()) ||
-    note.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase()))
-  );
+  // 过滤逻辑：搜索 + 标签筛选
+  const filteredNotes = notes.filter(note => {
+    // 如果 showMemory 为 false，隐藏包含"memory"标签的笔记
+    if (!showMemory && note.tags?.some(tag => tag.toLowerCase() === 'memory')) {
+      return false;
+    }
+    const content = note.content ?? '';
+    // 搜索过滤
+    return (
+      note.title.toLowerCase().includes(search.toLowerCase()) ||
+      content.toLowerCase().includes(search.toLowerCase()) ||
+      note.tags?.some(tag => tag.toLowerCase().includes(search.toLowerCase()))
+    );
+  });
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -67,12 +78,12 @@ export default function Home() {
                 <p className="text-sm text-gray-500">个人知识管理</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <button className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                 <Settings className="w-5 h-5" />
               </button>
-              <Link 
+              <Link
                 href="/new"
                 className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
               >
@@ -86,16 +97,34 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-4 py-8">
-        {/* Search Bar */}
-        <div className="relative mb-8">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <input
-            type="text"
-            placeholder="搜索笔记、标签..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-          />
+        {/* Search Bar & Filters */}
+        <div className="mb-8">
+          <div className="relative mb-4">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="搜索笔记、标签..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+            />
+          </div>
+
+          {/* Tag Filter */}
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50">
+              <input
+                type="checkbox"
+                checked={showMemory}
+                onChange={(e) => setShowMemory(e.target.checked)}
+                className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500"
+              />
+              <span className="text-sm text-gray-700">显示 Memory 笔记</span>
+            </label>
+            <span className="text-sm text-gray-500">
+              {showMemory ? `显示全部 ${notes.length} 条笔记` : `已隐藏 memory 标签笔记，显示 ${filteredNotes.length} 条`}
+            </span>
+          </div>
         </div>
 
         {/* Error State */}
@@ -109,14 +138,14 @@ export default function Home() {
                 <h3 className="font-semibold text-red-800 mb-2">无法连接到后端服务</h3>
                 <p className="text-sm text-red-600 mb-4">{error}</p>
                 <div className="flex gap-3">
-                  <button 
+                  <button
                     onClick={fetchNotes}
                     className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
                   >
                     重试连接
                   </button>
-                  <a 
-                    href="http://localhost:8000/docs"
+                  <a
+                    href={apiUrl('/docs')}
                     target="_blank"
                     className="px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-100 text-sm"
                   >
@@ -158,7 +187,7 @@ export default function Home() {
 
         {/* Notes Grid */}
         <h2 className="text-lg font-semibold text-gray-900 mb-4">最近笔记</h2>
-        
+
         {loading ? (
           <div className="text-center py-12 text-gray-500">
             加载中...
@@ -167,7 +196,7 @@ export default function Home() {
           <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
             <BookOpen className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 mb-4">暂无笔记</p>
-            <Link 
+            <Link
               href="/new"
               className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
             >
@@ -178,7 +207,7 @@ export default function Home() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filteredNotes.map(note => (
-              <Link 
+              <Link
                 key={note.id}
                 href={`/note/${note.id}`}
                 className="bg-white p-6 rounded-xl border border-gray-200 hover:border-primary-300 hover:shadow-md transition-all"
@@ -187,12 +216,12 @@ export default function Home() {
                   {note.title}
                 </h3>
                 <p className="text-sm text-gray-500 mb-4 line-clamp-3">
-                  {note.content?.slice(0, 150)}...
+                  {(note.content ?? '').slice(0, 150)}...
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex flex-wrap gap-1">
                     {note.tags?.slice(0, 3).map(tag => (
-                      <span 
+                      <span
                         key={tag}
                         className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full"
                       >
@@ -205,7 +234,7 @@ export default function Home() {
                     note.status === 'Reviewed' ? 'bg-green-100 text-green-700' :
                     'bg-gray-100 text-gray-600'
                   }`}>
-                    {note.status === 'Inbox' ? '收件箱' : 
+                    {note.status === 'Inbox' ? '收件箱' :
                      note.status === 'Reviewed' ? '已回顾' : '已归档'}
                   </span>
                 </div>
@@ -225,7 +254,7 @@ export default function Home() {
               <p className="text-sm text-gray-500">用自然语言查询你的知识库</p>
             </div>
           </div>
-          <Link 
+          <Link
             href="/ask"
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
           >

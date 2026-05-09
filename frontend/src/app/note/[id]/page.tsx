@@ -6,11 +6,12 @@ import Link from 'next/link';
 import { ArrowLeft, Edit, Trash2, Archive, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { apiFetch } from '@/lib/api';
 
 interface Note {
   id: string;
   title: string;
-  content: string;
+  content: string | null;
   tags: string[];
   status: string;
   created_at: string;
@@ -30,7 +31,7 @@ export default function NoteDetail() {
 
   const fetchNote = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/notes/${params.id}`);
+      const res = await apiFetch(`/api/notes/${params.id}`);
       if (res.ok) {
         const data = await res.json();
         setNote(data);
@@ -44,7 +45,7 @@ export default function NoteDetail() {
 
   const updateStatus = async (status: string) => {
     try {
-      await fetch(`http://localhost:8000/api/notes/${params.id}`, {
+      await apiFetch(`/api/notes/${params.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
@@ -59,7 +60,7 @@ export default function NoteDetail() {
     if (!confirm('确定删除这篇笔记吗？')) return;
     
     try {
-      await fetch(`http://localhost:8000/api/notes/${params.id}`, {
+      await apiFetch(`/api/notes/${params.id}`, {
         method: 'DELETE'
       });
       router.push('/');

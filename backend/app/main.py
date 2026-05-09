@@ -3,10 +3,11 @@ Second Brain FastAPI Application
 """
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
+from app.core.security import require_api_key
 from app.db.connection import init_db, close_db
 from app.services.rag_service import rag_service
 
@@ -21,9 +22,16 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("✅ Database initialized")
     
-    # Initialize RAG service
-    await rag_service.initialize()
-    print("✅ RAG Service initialized")
+    # Initialize RAG service (skip if hanging)
+    try:
+        await asyncio.wait_for(rag_service.initialize(), timeout=30.0)
+        print("✅ RAG Service initialized")
+    except asyncio.TimeoutError:
+        rag_service.mark_degraded("RAG Service initialization timed out")
+        print("⚠️ RAG Service initialization timed out, running in degraded mode")
+    except Exception as e:
+        rag_service.mark_degraded(str(e))
+        print(f"⚠️ RAG Service failed: {e}, running in degraded mode")
     
     yield
     
@@ -45,7 +53,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,8 +64,18 @@ app.add_middleware(
 from app.api.endpoints import notes, rag, health
 
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
-app.include_router(notes.router, prefix="/api/notes", tags=["Notes"])
-app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])
+app.include_router(
+    notes.router,
+    prefix="/api/notes",
+    tags=["Notes"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    rag.router,
+    prefix="/api/rag",
+    tags=["RAG"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 # Root endpoint

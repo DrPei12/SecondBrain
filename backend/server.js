@@ -13,6 +13,23 @@ const { v4: uuidv4 } = require('uuid');
 
 // JSON file database
 const DB_FILE = path.join(__dirname, 'database.json');
+const API_KEY = process.env.SECOND_BRAIN_API_KEY || '';
+const CORS_ORIGINS = (process.env.BACKEND_CORS_ORIGINS || 'http://localhost:3003,http://127.0.0.1:3003')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+function requireApiKey(req, res, next) {
+    if (!API_KEY) {
+        return res.status(503).json({ detail: 'SECOND_BRAIN_API_KEY is not configured' });
+    }
+
+    if (req.get('X-API-Key') !== API_KEY) {
+        return res.status(401).json({ detail: 'Invalid or missing API key' });
+    }
+
+    next();
+}
 
 // Initialize database
 function loadDb() {
@@ -38,38 +55,53 @@ function saveDb(data) {
 const db = loadDb();
 
 // Initialize with sample data
-db.notes = [
-    {
-        id: '1',
-        title: '欢迎使用 Second Brain',
-        content: '# Welcome to Second Brain\n\n这是一个轻量级的个人知识管理平台。\n\n## 核心功能\n\n- 📝 笔记管理\n- 🏷️ 标签系统\n- 🔍 搜索过滤\n- 🤖 RAG 智能问答\n\n## 使用方法\n\n1. 创建笔记\n2. 添加标签\n3. 浏览和回顾\n4. 智能问答',
-        summary: null,
-        tags: ['欢迎', '使用指南'],
-        source_url: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        status: 'Inbox',
-        indexed_for_rag: 'pending'
-    },
-    {
-        id: '2',
-        title: 'AI Agent 知识收集流程',
-        content: '# AI Agent 知识收集\n\n外部 AI Agent 会自动通过 API 推送收集到的知识到本平台。\n\n## 推送格式\n\n```json\n{\n  "title": "笔记标题",\n  "content": "Markdown 内容",\n  "tags": ["标签1", "标签2"],\n  "source_url": "https://example.com"\n}\n```\n\n## 批量推送\n\n支持一次推送多条笔记。',
-        summary: null,
-        tags: ['AI', '自动化', '工作流'],
-        source_url: null,
-        created_at: new Date(Date.now() - 3600000).toISOString(),
-        updated_at: new Date(Date.now() - 3600000).toISOString(),
-        status: 'Inbox',
-        indexed_for_rag: 'pending'
-    }
-];
+if (!Array.isArray(db.notes)) {
+    db.notes = [];
+}
+
+if (db.notes.length === 0) {
+    db.notes = [
+        {
+            id: '1',
+            title: '欢迎使用 Second Brain',
+            content: '# Welcome to Second Brain\n\n这是一个轻量级的个人知识管理平台。\n\n## 核心功能\n\n- 📝 笔记管理\n- 🏷️ 标签系统\n- 🔍 搜索过滤\n- 🤖 RAG 智能问答\n\n## 使用方法\n\n1. 创建笔记\n2. 添加标签\n3. 浏览和回顾\n4. 智能问答',
+            summary: null,
+            tags: ['欢迎', '使用指南'],
+            source_url: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            status: 'Inbox',
+            indexed_for_rag: 'pending'
+        },
+        {
+            id: '2',
+            title: 'AI Agent 知识收集流程',
+            content: '# AI Agent 知识收集\n\n外部 AI Agent 会自动通过 API 推送收集到的知识到本平台。\n\n## 推送格式\n\n```json\n{\n  "title": "笔记标题",\n  "content": "Markdown 内容",\n  "tags": ["标签1", "标签2"],\n  "source_url": "https://example.com"\n}\n```\n\n## 批量推送\n\n支持一次推送多条笔记。',
+            summary: null,
+            tags: ['AI', '自动化', '工作流'],
+            source_url: null,
+            created_at: new Date(Date.now() - 3600000).toISOString(),
+            updated_at: new Date(Date.now() - 3600000).toISOString(),
+            status: 'Inbox',
+            indexed_for_rag: 'pending'
+        }
+    ];
+    saveDb(db);
+}
 
 const app = express();
 const PORT = process.env.PORT || 8000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || CORS_ORIGINS.includes(origin)) {
+            return callback(null, true);
+        }
+        return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true
+}));
 app.use(express.json());
 
 // Request logging
@@ -87,6 +119,9 @@ app.get('/api/health', (req, res) => {
 app.get('/api/health/ready', (req, res) => {
     res.json({ status: 'ready', database: 'connected', rag: 'initialized' });
 });
+
+app.use('/api/notes', requireApiKey);
+app.use('/api/rag', requireApiKey);
 
 // ==================== Notes Endpoints ====================
 
@@ -281,6 +316,8 @@ app.post('/api/rag/index', (req, res) => {
     
     if (note_ids && Array.isArray(note_ids)) {
         toIndex = db.notes.filter(n => note_ids.includes(n.id));
+    } else if (force_reindex) {
+        toIndex = db.notes;
     } else {
         toIndex = db.notes.filter(n => n.indexed_for_rag === 'pending');
     }

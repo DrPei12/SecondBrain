@@ -2,7 +2,6 @@
 Core configuration for Second Brain application
 """
 import os
-from typing import Any
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
@@ -30,10 +29,24 @@ class Settings(BaseSettings):
     
     # API Keys
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    SECOND_BRAIN_API_KEY: str = os.getenv("SECOND_BRAIN_API_KEY", "")
+    BACKEND_CORS_ORIGINS: str = os.getenv(
+        "BACKEND_CORS_ORIGINS",
+        "http://localhost:3003,http://127.0.0.1:3003"
+    )
     
     # Server
     APP_HOST: str = os.getenv("APP_HOST", "0.0.0.0")
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Return configured CORS origins as a normalized list."""
+        return [
+            origin.strip()
+            for origin in self.BACKEND_CORS_ORIGINS.split(",")
+            if origin.strip()
+        ]
     
     class Config:
         env_file = ".env"
