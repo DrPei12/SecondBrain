@@ -1,7 +1,7 @@
 {
   "name": "second-brain-api",
   "version": "0.1.0",
-  "description": "Second Brain API Server (Node.js Alternative)",
+  "description": "Second Brain Node quick-start server for notes only; product RAG is served by FastAPI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

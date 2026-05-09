@@ -117,11 +117,23 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/health/ready', (req, res) => {
-    res.json({ status: 'ready', database: 'connected', rag: 'initialized' });
+    res.json({
+        status: 'degraded',
+        database: 'connected',
+        rag: 'unavailable',
+        detail: 'Node quick-start server does not provide product RAG; run the FastAPI backend for /api/rag.'
+    });
 });
 
 app.use('/api/notes', requireApiKey);
 app.use('/api/rag', requireApiKey);
+app.use('/api/rag', (req, res) => {
+    res.status(501).json({
+        detail: 'Product RAG is available only through the FastAPI backend.',
+        mock: false,
+        ready: false
+    });
+});
 
 // ==================== Notes Endpoints ====================
 
