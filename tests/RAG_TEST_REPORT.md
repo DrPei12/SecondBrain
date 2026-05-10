@@ -23,6 +23,12 @@ Required validation environment:
 - `BAILIAN_ENABLE_THINKING=false`
 - `BAILIAN_EMBEDDING_MODEL=text-embedding-v4`
 
+On Windows, configure the ignored local key file with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\set-dashscope-key.ps1
+```
+
 This preflight checks local credentials, Bailian model settings, thinking mode,
 embedding settings, and existing local notes without printing secrets:
 

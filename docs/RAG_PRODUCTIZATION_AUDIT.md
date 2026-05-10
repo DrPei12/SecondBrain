@@ -61,6 +61,10 @@ The goal is not complete until a real Bailian/DashScope credential is configured
 outside git and the following acceptance command passes against existing
 SecondBrain documents:
 
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\set-dashscope-key.ps1
+```
+
 ```bash
 python tests/test_rag_performance.py --preflight
 ```
