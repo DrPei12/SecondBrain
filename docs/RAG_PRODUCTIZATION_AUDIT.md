@@ -42,6 +42,10 @@ SecondBrain documents.
 - `git diff --check` passed, with line-ending warnings only on local/user files.
 - No-key FastAPI smoke: `LLM_PROVIDER=bailian`, model `qwen3.6-plus`,
   thinking disabled, readiness degraded, query returned HTTP 503.
+- Windows FastAPI health smoke using a temporary local venv and temporary
+  `SECOND_BRAIN_API_KEY`: `/api/health/ready` reported `status=degraded`,
+  provider `bailian`, model `qwen3.6-plus`, `thinking_enabled=false`;
+  authenticated `/api/rag/health` reported `ready=false`, `mock=false`.
 - Fake OpenAI-compatible provider smoke: returned `mock=false` with sources.
 - Node quick-start smoke: readiness degraded, RAG query HTTP 501,
   stats `ready=false`, `mock=false`.
