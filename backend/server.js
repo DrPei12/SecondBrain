@@ -127,13 +127,6 @@ app.get('/api/health/ready', (req, res) => {
 
 app.use('/api/notes', requireApiKey);
 app.use('/api/rag', requireApiKey);
-app.use('/api/rag', (req, res) => {
-    res.status(501).json({
-        detail: 'Product RAG is available only through the FastAPI backend.',
-        mock: false,
-        ready: false
-    });
-});
 
 // ==================== Notes Endpoints ====================
 
@@ -291,69 +284,60 @@ app.delete('/api/notes/:id', (req, res) => {
     res.json({ message: 'Note deleted successfully' });
 });
 
-// ==================== RAG Endpoints (Mock) ====================
+// ==================== RAG Endpoints ====================
+
+function sendRagUnavailable(res) {
+    return res.status(501).json({
+        detail: 'Product RAG is available only through the FastAPI backend.',
+        mock: false,
+        ready: false
+    });
+}
 
 app.post('/api/rag/query', (req, res) => {
-    const { query, mode = 'mix', top_k = 5 } = req.body;
-    
-    // Mock RAG response - in production, this would use LightRAG
-    const relevantNotes = db.notes
-        .filter(n => n.content && (
-            n.content.toLowerCase().includes(query.toLowerCase().split(' ')[0]) ||
-            n.title.toLowerCase().includes(query.toLowerCase().split(' ')[0])
-        ))
-        .slice(0, top_k);
-    
-    const answer = relevantNotes.length > 0 
-        ? `根据您的问题"${query}"，我在笔记中找到了以下相关内容：\n\n` +
-          relevantNotes.map(n => `- ${n.title}`).join('\n')
-        : `我还没有关于"${query}"的笔记。让我帮您创建一条新的笔记记录这个问题。`;
-    
-    res.json({
-        query,
-        answer,
-        sources: relevantNotes.map(n => ({
-            id: n.id,
-            title: n.title,
-            relevance: Math.random() * 0.3 + 0.7
-        })),
-        mode
-    });
+    return sendRagUnavailable(res);
 });
 
 app.post('/api/rag/index', (req, res) => {
-    const { note_ids, force_reindex = false } = req.body || {};
-    
-    let toIndex = [];
-    
-    if (note_ids && Array.isArray(note_ids)) {
-        toIndex = db.notes.filter(n => note_ids.includes(n.id));
-    } else if (force_reindex) {
-        toIndex = db.notes;
-    } else {
-        toIndex = db.notes.filter(n => n.indexed_for_rag === 'pending');
-    }
-    
-    toIndex.forEach(n => {
-        n.indexed_for_rag = 'indexed';
-    });
-    
-    saveDb(db);
-    
-    res.json({
-        indexed_count: toIndex.length,
-        failed_count: 0,
-        status: 'complete',
-        message: `Indexed ${toIndex.length} notes for RAG`
-    });
+    return sendRagUnavailable(res);
+});
+
+app.post('/api/rag/rebuild', (req, res) => {
+    return sendRagUnavailable(res);
+});
+
+app.post('/api/rag/document/:id/reindex', (req, res) => {
+    return sendRagUnavailable(res);
+});
+
+app.delete('/api/rag/document/:id', (req, res) => {
+    return sendRagUnavailable(res);
 });
 
 app.get('/api/rag/stats', (req, res) => {
     res.json({
-        working_dir: './rag_data',
-        initialized: true,
-        total_documents: db.notes.filter(n => n.indexed_for_rag === 'indexed').length,
-        pending_documents: db.notes.filter(n => n.indexed_for_rag === 'pending').length
+        initialized: false,
+        ready: false,
+        mock: false,
+        degraded_reason: 'Node quick-start server does not provide product RAG; run the FastAPI backend.',
+        notes: {
+            total: db.notes.length,
+            by_rag_status: db.notes.reduce((counts, note) => {
+                const status = note.indexed_for_rag || 'unknown';
+                counts[status] = (counts[status] || 0) + 1;
+                return counts;
+            }, {})
+        }
+    });
+});
+
+app.get('/api/rag/health', (req, res) => {
+    res.json({
+        status: 'degraded',
+        initialized: false,
+        ready: false,
+        mock: false,
+        degraded_reason: 'Node quick-start server does not provide product RAG; run the FastAPI backend.'
     });
 });
 
@@ -387,9 +371,8 @@ app.listen(PORT, '0.0.0.0', () => {
    DELETE /api/notes/:id       - Delete note
    
 🤖 RAG Endpoints:
-   POST /api/rag/query          - Query knowledge base
-   POST /api/rag/index         - Index notes
-   GET  /api/rag/stats         - Get RAG stats
+   Product RAG is served by the FastAPI backend.
+   This Node quick-start returns degraded/unavailable RAG status.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     `);
 });
