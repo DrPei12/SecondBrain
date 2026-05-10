@@ -87,7 +87,11 @@ class Settings(BaseSettings):
     
     # API Keys
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    SECOND_BRAIN_API_KEY: str = os.getenv("SECOND_BRAIN_API_KEY", "")
+    SECOND_BRAIN_API_KEY_FILE: str = os.getenv("SECOND_BRAIN_API_KEY_FILE", "")
+    SECOND_BRAIN_API_KEY: str = _secret_from_env(
+        ("SECOND_BRAIN_API_KEY",),
+        ("SECOND_BRAIN_API_KEY_FILE",),
+    )
     BACKEND_CORS_ORIGINS: str = os.getenv(
         "BACKEND_CORS_ORIGINS",
         "http://localhost:3003,http://127.0.0.1:3003"

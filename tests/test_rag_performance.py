@@ -64,9 +64,28 @@ def _read_env_value(path: Path, key: str) -> str:
     return ""
 
 
+def _read_secret_path(path_value: str, base_dir: Path = Path(".")) -> str:
+    if not path_value:
+        return ""
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = base_dir / path
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8-sig").strip()
+
+
 def resolve_api_key(explicit: str) -> str:
     if explicit:
         return explicit
+
+    env_value = os.getenv("SECOND_BRAIN_API_KEY", "").strip()
+    if env_value:
+        return env_value
+
+    env_file_value = _read_secret_path(os.getenv("SECOND_BRAIN_API_KEY_FILE", "").strip())
+    if env_file_value:
+        return env_file_value
 
     env_file = os.getenv("SECOND_BRAIN_ENV_FILE", "").strip()
     candidates = []
@@ -76,6 +95,10 @@ def resolve_api_key(explicit: str) -> str:
 
     for candidate in candidates:
         value = _read_env_value(candidate, "SECOND_BRAIN_API_KEY")
+        if value:
+            return value
+        file_value = _read_env_value(candidate, "SECOND_BRAIN_API_KEY_FILE")
+        value = _read_secret_path(file_value, candidate.parent)
         if value:
             return value
     return ""

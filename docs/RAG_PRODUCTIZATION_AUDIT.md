@@ -28,15 +28,15 @@ SecondBrain documents.
 | Frontend asks real API and renders sources | `frontend/src/app/ask/page.tsx` | Done |
 | Legacy Node quick-start cannot return mock RAG | `backend/server.js` returns unavailable/degraded for RAG | Done |
 | Old mock report removed as acceptance evidence | `tests/RAG_TEST_REPORT.md` | Done |
-| Product smoke test checks provider gates | `tests/test_rag_performance.py` validates ready, bailian, model, thinking, embedding, rebuild, non-mock sources; it can read `SECOND_BRAIN_API_KEY` from process env, `SECOND_BRAIN_ENV_FILE`, `backend/.env`, or `.env` | Done |
+| Product smoke test checks provider gates | `tests/test_rag_performance.py` validates ready, bailian, model, thinking, embedding, rebuild, non-mock sources; it can read `SECOND_BRAIN_API_KEY` from process env, `SECOND_BRAIN_ENV_FILE`, `backend/.env`, `.env`, or `SECOND_BRAIN_API_KEY_FILE` | Done |
 | Shell smoke checks non-mock + sources | `tests/test_rag_shell.sh` | Done |
 | No committed provider secret | `.env`, secret files, live reports ignored | Done |
-| Live Bailian query against existing SecondBrain docs | Requires local `DASHSCOPE_API_KEY`/`BAILIAN_API_KEY` or key-file plus `SECOND_BRAIN_API_KEY` | Blocked |
+| Live Bailian query against existing SecondBrain docs | Requires local `DASHSCOPE_API_KEY`/`BAILIAN_API_KEY` or key-file plus `SECOND_BRAIN_API_KEY` or `SECOND_BRAIN_API_KEY_FILE` | Blocked |
 
 ## Verification Performed
 
 - `python -m py_compile` over changed backend RAG files and smoke scripts.
-- `python -m py_compile tests/test_rag_performance.py` after adding local env-file fallback for the live smoke.
+- `python -m py_compile tests/test_rag_performance.py` after adding local env-file and key-file fallback for the live smoke.
 - `frontend` Next build passed after the Ask page update.
 - `git diff --check` passed, with line-ending warnings only on local/user files.
 - No-key FastAPI smoke: `LLM_PROVIDER=bailian`, model `qwen3.6-plus`,
