@@ -127,6 +127,18 @@ def _has_secret(value_keys: tuple[str, ...], file_keys: tuple[str, ...]) -> bool
     return False
 
 
+def _config_value(key: str, default: str = "") -> str:
+    value = os.getenv(key, "").strip()
+    if value:
+        return value
+
+    for candidate in _env_file_candidates():
+        value = _read_env_value(candidate, key)
+        if value:
+            return value
+    return default
+
+
 def _local_note_counts() -> dict[str, Any]:
     db_path = Path("backend/second_brain.db")
     if not db_path.is_file():
@@ -146,6 +158,36 @@ def _local_note_counts() -> dict[str, Any]:
     }
 
 
+def _bailian_config_status() -> dict[str, Any]:
+    provider = _config_value("LLM_PROVIDER", "openai").strip().lower()
+    llm_model = _config_value("BAILIAN_LLM_MODEL", "qwen3.6-plus").strip()
+    embedding_model = _config_value(
+        "BAILIAN_EMBEDDING_MODEL",
+        "text-embedding-v4",
+    ).strip()
+    dimensions_raw = _config_value("BAILIAN_EMBEDDING_DIMENSIONS", "1024").strip()
+    try:
+        embedding_dimensions = int(dimensions_raw)
+    except ValueError:
+        embedding_dimensions = None
+    thinking_enabled = (
+        _config_value("BAILIAN_ENABLE_THINKING", "false").strip().lower() == "true"
+    )
+
+    return {
+        "provider": provider,
+        "llm_model": llm_model,
+        "embedding_model": embedding_model,
+        "embedding_dimensions": embedding_dimensions,
+        "thinking_enabled": thinking_enabled,
+        "provider_is_bailian": provider == "bailian",
+        "llm_model_is_qwen36_plus": llm_model == "qwen3.6-plus",
+        "embedding_model_is_text_embedding_v4": embedding_model == "text-embedding-v4",
+        "embedding_dimensions_is_1024": embedding_dimensions == 1024,
+        "thinking_disabled": thinking_enabled is False,
+    }
+
+
 def build_preflight_report(explicit_api_key: str = "") -> dict[str, Any]:
     api_key_configured = bool(resolve_api_key(explicit_api_key))
     provider_key_configured = _has_secret(
@@ -154,11 +196,24 @@ def build_preflight_report(explicit_api_key: str = "") -> dict[str, Any]:
     )
     notes = _local_note_counts()
     notes_ready = bool(notes.get("non_empty_notes", 0) > 0)
+    bailian_config = _bailian_config_status()
+    config_ready = all(
+        (
+            bailian_config["provider_is_bailian"],
+            bailian_config["llm_model_is_qwen36_plus"],
+            bailian_config["embedding_model_is_text_embedding_v4"],
+            bailian_config["embedding_dimensions_is_1024"],
+            bailian_config["thinking_disabled"],
+        )
+    )
     return {
         "api_key_configured": api_key_configured,
         "bailian_provider_key_configured": provider_key_configured,
+        "bailian_config": bailian_config,
         "local_notes": notes,
-        "ready_to_run": api_key_configured and provider_key_configured and notes_ready,
+        "ready_to_run": (
+            api_key_configured and provider_key_configured and notes_ready and config_ready
+        ),
     }
 
 

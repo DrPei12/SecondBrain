@@ -23,11 +23,14 @@ Required validation environment:
 - `BAILIAN_ENABLE_THINKING=false`
 - `BAILIAN_EMBEDDING_MODEL=text-embedding-v4`
 
-The live Bailian/DashScope report should be generated with:
+This preflight checks local credentials, Bailian model settings, thinking mode,
+embedding settings, and existing local notes without printing secrets:
 
 ```bash
 python tests/test_rag_performance.py --preflight
 ```
+
+The live Bailian/DashScope report should then be generated with:
 
 ```bash
 python tests/test_rag_performance.py --report tests/RAG_LIVE_REPORT.json
