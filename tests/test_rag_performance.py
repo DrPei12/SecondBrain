@@ -76,10 +76,43 @@ class ProductRAGSmoke:
         ready.raise_for_status()
         return ready.json()
 
+    @staticmethod
+    def validate_health(health: dict[str, Any]) -> None:
+        rag = health.get("rag", {})
+        provider = rag.get("provider", {})
+        failures = []
+        if health.get("status") != "ready" or rag.get("ready") is not True:
+            failures.append(f"RAG is not ready: {health.get('status')}")
+        if provider.get("name") != "bailian":
+            failures.append(f"provider is not bailian: {provider.get('name')}")
+        if provider.get("llm_model") != "qwen3.6-plus":
+            failures.append(f"llm_model is not qwen3.6-plus: {provider.get('llm_model')}")
+        if provider.get("thinking_enabled") is not False:
+            failures.append("Bailian thinking is not disabled")
+        if provider.get("embedding_model") != "text-embedding-v4":
+            failures.append(
+                f"embedding_model is not text-embedding-v4: "
+                f"{provider.get('embedding_model')}"
+            )
+        if failures:
+            raise AssertionError("; ".join(failures))
+
     def rebuild_index(self) -> dict[str, Any]:
         response = self.request("POST", "/rag/rebuild")
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def validate_rebuild(rebuild: dict[str, Any]) -> None:
+        failures = []
+        if rebuild.get("failed_count", 0) != 0:
+            failures.append(f"failed_count={rebuild.get('failed_count')}")
+        if rebuild.get("indexed_count", 0) <= 0:
+            failures.append("indexed_count is 0")
+        if rebuild.get("status") not in {"complete", "success"}:
+            failures.append(f"status={rebuild.get('status')}")
+        if failures:
+            raise AssertionError("; ".join(failures))
 
     def query(self, query: str, source_hint: str) -> dict[str, Any]:
         started = time.perf_counter()
@@ -117,7 +150,9 @@ class ProductRAGSmoke:
 
     def run(self, queries: list[dict[str, str]]) -> dict[str, Any]:
         health = self.check_health()
+        self.validate_health(health)
         rebuild = self.rebuild_index()
+        self.validate_rebuild(rebuild)
 
         for item in queries:
             self.query(item["query"], item["source_hint"])
