@@ -15,6 +15,8 @@ Required validation environment:
 - `SECOND_BRAIN_API_KEY` configured
 - `LLM_PROVIDER=bailian`
 - `DASHSCOPE_API_KEY` or `BAILIAN_API_KEY` configured outside git
+- Or `DASHSCOPE_API_KEY_FILE` / `BAILIAN_API_KEY_FILE` pointing at a local
+  secret file excluded from git
 - `BAILIAN_LLM_MODEL=qwen3.6-plus`
 - `BAILIAN_ENABLE_THINKING=false`
 - `BAILIAN_EMBEDDING_MODEL=text-embedding-v4`

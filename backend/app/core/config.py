@@ -9,6 +9,26 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _read_secret_file(path: str) -> str:
+    """Read a local secret file without logging or normalizing the value."""
+    if not path:
+        return ""
+    with open(path, "r", encoding="utf-8-sig") as secret_file:
+        return secret_file.read().strip()
+
+
+def _secret_from_env(value_names: tuple[str, ...], file_names: tuple[str, ...]) -> str:
+    for name in value_names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    for name in file_names:
+        path = os.getenv(name, "").strip()
+        if path:
+            return _read_secret_file(path)
+    return ""
+
+
 class Settings(BaseSettings):
     """Application settings"""
     
@@ -43,9 +63,11 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
 
     # Bailian / DashScope OpenAI-compatible settings.
-    DASHSCOPE_API_KEY: str = os.getenv(
-        "DASHSCOPE_API_KEY",
-        os.getenv("BAILIAN_API_KEY", "")
+    DASHSCOPE_API_KEY_FILE: str = os.getenv("DASHSCOPE_API_KEY_FILE", "")
+    BAILIAN_API_KEY_FILE: str = os.getenv("BAILIAN_API_KEY_FILE", "")
+    DASHSCOPE_API_KEY: str = _secret_from_env(
+        ("DASHSCOPE_API_KEY", "BAILIAN_API_KEY"),
+        ("DASHSCOPE_API_KEY_FILE", "BAILIAN_API_KEY_FILE"),
     )
     BAILIAN_BASE_URL: str = os.getenv(
         "BAILIAN_BASE_URL",
