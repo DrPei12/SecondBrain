@@ -146,8 +146,8 @@ def _local_note_counts() -> dict[str, Any]:
     }
 
 
-def build_preflight_report() -> dict[str, Any]:
-    api_key_configured = bool(resolve_api_key(""))
+def build_preflight_report(explicit_api_key: str = "") -> dict[str, Any]:
+    api_key_configured = bool(resolve_api_key(explicit_api_key))
     provider_key_configured = _has_secret(
         ("DASHSCOPE_API_KEY", "BAILIAN_API_KEY"),
         ("DASHSCOPE_API_KEY_FILE", "BAILIAN_API_KEY_FILE"),
@@ -300,7 +300,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.preflight:
-        report = build_preflight_report()
+        report = build_preflight_report(args.api_key)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ready_to_run"] else 1
 
