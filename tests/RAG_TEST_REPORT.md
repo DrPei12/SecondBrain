@@ -12,7 +12,8 @@ Current product validation is performed by:
 Required validation environment:
 
 - FastAPI backend running
-- `SECOND_BRAIN_API_KEY` configured
+- `SECOND_BRAIN_API_KEY` configured in process env, `SECOND_BRAIN_ENV_FILE`,
+  `backend/.env`, `.env`, or passed as `--api-key`
 - `LLM_PROVIDER=bailian`
 - `DASHSCOPE_API_KEY` or `BAILIAN_API_KEY` configured outside git
 - Or `DASHSCOPE_API_KEY_FILE` / `BAILIAN_API_KEY_FILE` pointing at a local

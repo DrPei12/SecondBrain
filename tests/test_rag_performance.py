@@ -45,6 +45,42 @@ DEFAULT_QUERIES = [
 ]
 
 
+def _read_env_value(path: Path, key: str) -> str:
+    """Read one simple KEY=VALUE entry without logging secrets."""
+    if not path.is_file():
+        return ""
+
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip() != key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        return value.strip()
+    return ""
+
+
+def resolve_api_key(explicit: str) -> str:
+    if explicit:
+        return explicit
+
+    env_file = os.getenv("SECOND_BRAIN_ENV_FILE", "").strip()
+    candidates = []
+    if env_file:
+        candidates.append(Path(env_file))
+    candidates.extend([Path("backend/.env"), Path(".env")])
+
+    for candidate in candidates:
+        value = _read_env_value(candidate, "SECOND_BRAIN_API_KEY")
+        if value:
+            return value
+    return ""
+
+
 class ProductRAGSmoke:
     def __init__(self, api_base: str, api_key: str, timeout: int) -> None:
         self.api_base = api_base.rstrip("/")
@@ -181,10 +217,11 @@ def main() -> int:
     parser.add_argument("--report")
     args = parser.parse_args()
 
-    if not args.api_key:
+    api_key = resolve_api_key(args.api_key)
+    if not api_key:
         raise SystemExit("SECOND_BRAIN_API_KEY or --api-key is required")
 
-    suite = ProductRAGSmoke(args.api_base, args.api_key, args.timeout)
+    suite = ProductRAGSmoke(args.api_base, api_key, args.timeout)
     report = suite.run(DEFAULT_QUERIES)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
