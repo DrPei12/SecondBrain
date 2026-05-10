@@ -26,6 +26,10 @@ Required validation environment:
 The live Bailian/DashScope report should be generated with:
 
 ```bash
+python tests/test_rag_performance.py --preflight
+```
+
+```bash
 python tests/test_rag_performance.py --report tests/RAG_LIVE_REPORT.json
 ```
 

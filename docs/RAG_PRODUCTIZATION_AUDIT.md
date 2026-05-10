@@ -28,7 +28,7 @@ SecondBrain documents.
 | Frontend asks real API and renders sources | `frontend/src/app/ask/page.tsx` | Done |
 | Legacy Node quick-start cannot return mock RAG | `backend/server.js` returns unavailable/degraded for RAG | Done |
 | Old mock report removed as acceptance evidence | `tests/RAG_TEST_REPORT.md` | Done |
-| Product smoke test checks provider gates | `tests/test_rag_performance.py` validates ready, bailian, model, thinking, embedding, rebuild, non-mock sources; it can read `SECOND_BRAIN_API_KEY` from process env, `SECOND_BRAIN_ENV_FILE`, `backend/.env`, `.env`, or `SECOND_BRAIN_API_KEY_FILE` | Done |
+| Product smoke test checks provider gates | `tests/test_rag_performance.py` validates ready, bailian, model, thinking, embedding, rebuild, non-mock sources; `--preflight` checks local credentials and existing notes without printing secrets | Done |
 | Shell smoke checks non-mock + sources | `tests/test_rag_shell.sh` | Done |
 | No committed provider secret | `.env`, secret files, live reports ignored | Done |
 | Live Bailian query against existing SecondBrain docs | Requires local `DASHSCOPE_API_KEY`/`BAILIAN_API_KEY` or key-file plus `SECOND_BRAIN_API_KEY` or `SECOND_BRAIN_API_KEY_FILE` | Blocked |
@@ -36,7 +36,8 @@ SecondBrain documents.
 ## Verification Performed
 
 - `python -m py_compile` over changed backend RAG files and smoke scripts.
-- `python -m py_compile tests/test_rag_performance.py` after adding local env-file and key-file fallback for the live smoke.
+- `python -m py_compile tests/test_rag_performance.py` after adding local env-file, key-file, and `--preflight` support for the live smoke.
+- `python tests/test_rag_performance.py --preflight` reports both credential classes missing and confirms 24 non-empty local notes.
 - `frontend` Next build passed after the Ask page update.
 - `git diff --check` passed, with line-ending warnings only on local/user files.
 - No-key FastAPI smoke: `LLM_PROVIDER=bailian`, model `qwen3.6-plus`,
@@ -52,6 +53,10 @@ SecondBrain documents.
 The goal is not complete until a real Bailian/DashScope credential is configured
 outside git and the following acceptance command passes against existing
 SecondBrain documents:
+
+```bash
+python tests/test_rag_performance.py --preflight
+```
 
 ```bash
 python tests/test_rag_performance.py --report tests/RAG_LIVE_REPORT.json

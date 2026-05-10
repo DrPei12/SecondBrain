@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,15 @@ DEFAULT_QUERIES = [
         "source_hint": "AI 产品经理",
     },
 ]
+
+
+def _env_file_candidates() -> list[Path]:
+    env_file = os.getenv("SECOND_BRAIN_ENV_FILE", "").strip()
+    candidates = []
+    if env_file:
+        candidates.append(Path(env_file))
+    candidates.extend([Path("backend/.env"), Path(".env")])
+    return candidates
 
 
 def _read_env_value(path: Path, key: str) -> str:
@@ -87,13 +97,7 @@ def resolve_api_key(explicit: str) -> str:
     if env_file_value:
         return env_file_value
 
-    env_file = os.getenv("SECOND_BRAIN_ENV_FILE", "").strip()
-    candidates = []
-    if env_file:
-        candidates.append(Path(env_file))
-    candidates.extend([Path("backend/.env"), Path(".env")])
-
-    for candidate in candidates:
+    for candidate in _env_file_candidates():
         value = _read_env_value(candidate, "SECOND_BRAIN_API_KEY")
         if value:
             return value
@@ -102,6 +106,60 @@ def resolve_api_key(explicit: str) -> str:
         if value:
             return value
     return ""
+
+
+def _has_secret(value_keys: tuple[str, ...], file_keys: tuple[str, ...]) -> bool:
+    for key in value_keys:
+        if os.getenv(key, "").strip():
+            return True
+    for key in file_keys:
+        if _read_secret_path(os.getenv(key, "").strip()):
+            return True
+
+    for candidate in _env_file_candidates():
+        for key in value_keys:
+            if _read_env_value(candidate, key):
+                return True
+        for key in file_keys:
+            file_value = _read_env_value(candidate, key)
+            if _read_secret_path(file_value, candidate.parent):
+                return True
+    return False
+
+
+def _local_note_counts() -> dict[str, Any]:
+    db_path = Path("backend/second_brain.db")
+    if not db_path.is_file():
+        return {"database": str(db_path), "exists": False}
+
+    with sqlite3.connect(db_path) as conn:
+        notes = conn.execute("select count(*) from notes").fetchone()[0]
+        non_empty = conn.execute(
+            "select count(*) from notes "
+            "where content is not null and length(trim(content)) != 0"
+        ).fetchone()[0]
+    return {
+        "database": str(db_path),
+        "exists": True,
+        "notes_count": notes,
+        "non_empty_notes": non_empty,
+    }
+
+
+def build_preflight_report() -> dict[str, Any]:
+    api_key_configured = bool(resolve_api_key(""))
+    provider_key_configured = _has_secret(
+        ("DASHSCOPE_API_KEY", "BAILIAN_API_KEY"),
+        ("DASHSCOPE_API_KEY_FILE", "BAILIAN_API_KEY_FILE"),
+    )
+    notes = _local_note_counts()
+    notes_ready = bool(notes.get("non_empty_notes", 0) > 0)
+    return {
+        "api_key_configured": api_key_configured,
+        "bailian_provider_key_configured": provider_key_configured,
+        "local_notes": notes,
+        "ready_to_run": api_key_configured and provider_key_configured and notes_ready,
+    }
 
 
 class ProductRAGSmoke:
@@ -237,8 +295,14 @@ def main() -> int:
     parser.add_argument("--api-base", default=os.getenv("API_BASE", "http://127.0.0.1:8000/api"))
     parser.add_argument("--api-key", default=os.getenv("SECOND_BRAIN_API_KEY", ""))
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--report")
     args = parser.parse_args()
+
+    if args.preflight:
+        report = build_preflight_report()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["ready_to_run"] else 1
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
