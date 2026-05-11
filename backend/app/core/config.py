@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     RAG_ENGINE: str = os.getenv("RAG_ENGINE", "vector")
     RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "1600"))
     RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
+    RAG_INDEX_RETRIES: int = int(os.getenv("RAG_INDEX_RETRIES", "1"))
     RAG_VECTOR_STORE_FILE: str = os.getenv(
         "RAG_VECTOR_STORE_FILE",
         "./rag_data/vector_store.json"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -45,6 +46,57 @@ class RAGService:
         self._lightrag_available = LIGHTRAG_AVAILABLE
         self._degraded_reason: str | None = None
         self._lock = asyncio.Lock()
+        self._recent_events: list[dict[str, Any]] = []
+        self._last_index_job: dict[str, Any] | None = None
+        self._index_metrics: dict[str, Any] = {
+            "runs": 0,
+            "indexed_total": 0,
+            "failed_total": 0,
+            "retry_total": 0,
+            "last_duration_ms": None,
+        }
+        self._query_metrics: dict[str, Any] = {
+            "count": 0,
+            "failure_count": 0,
+            "total_latency_ms": 0.0,
+            "last_latency_ms": None,
+            "last_query_at": None,
+            "last_error": None,
+        }
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.utcnow().isoformat()
+
+    def _append_event(self, event_type: str, status: str, detail: dict[str, Any]) -> None:
+        self._recent_events.append(
+            {
+                "timestamp": self._now_iso(),
+                "type": event_type,
+                "status": status,
+                "detail": detail,
+            }
+        )
+        self._recent_events = self._recent_events[-20:]
+
+    def _record_query_success(self, elapsed_ms: float) -> None:
+        self._query_metrics["count"] += 1
+        self._query_metrics["total_latency_ms"] += elapsed_ms
+        self._query_metrics["last_latency_ms"] = elapsed_ms
+        self._query_metrics["last_query_at"] = self._now_iso()
+        self._query_metrics["last_error"] = None
+
+    def _record_query_failure(self, started: float, error: Exception) -> None:
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        self._query_metrics["failure_count"] += 1
+        self._query_metrics["last_latency_ms"] = elapsed_ms
+        self._query_metrics["last_query_at"] = self._now_iso()
+        self._query_metrics["last_error"] = str(error)
+        self._append_event(
+            "query",
+            "failed",
+            {"elapsed_ms": elapsed_ms, "error": str(error)},
+        )
 
     async def initialize(self) -> None:
         """Initialize provider, local vector store, and optional LightRAG."""
@@ -229,6 +281,17 @@ class RAGService:
     ) -> dict[str, Any]:
         """Index pending notes or a requested note set."""
         self._ensure_initialized()
+        started = time.perf_counter()
+        job_id = f"rag-index-{int(started * 1000)}"
+        retry_limit = max(0, settings.RAG_INDEX_RETRIES)
+        self._last_index_job = {
+            "id": job_id,
+            "status": "running",
+            "started_at": self._now_iso(),
+            "force": force,
+            "requested_note_count": len(note_ids) if note_ids else None,
+            "retry_limit": retry_limit,
+        }
 
         from app.services.note_service import note_service
 
@@ -243,9 +306,26 @@ class RAGService:
             force=force,
         )
         if not notes:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+            self._last_index_job.update(
+                {
+                    "status": "complete",
+                    "ended_at": self._now_iso(),
+                    "duration_ms": elapsed_ms,
+                    "indexed_count": 0,
+                    "failed_count": 0,
+                    "retry_count": 0,
+                }
+            )
+            self._append_event(
+                "index",
+                "complete",
+                {"job_id": job_id, "indexed_count": 0, "failed_count": 0},
+            )
             return {
                 "indexed_count": 0,
                 "failed_count": 0,
+                "retry_count": 0,
                 "indexed_ids": [],
                 "failed_ids": [],
                 "status": "complete",
@@ -255,27 +335,66 @@ class RAGService:
         indexed_ids: list[str] = []
         failed_ids: list[str] = []
         errors: dict[str, str] = {}
+        retry_count = 0
 
         for note in notes:
-            result = await self.index_note(
-                db,
-                note_id=note.id,
-                title=note.title,
-                content=note.content or "",
-            )
+            result: dict[str, Any] = {}
+            for attempt in range(retry_limit + 1):
+                result = await self.index_note(
+                    db,
+                    note_id=note.id,
+                    title=note.title,
+                    content=note.content or "",
+                )
+                if result.get("success"):
+                    break
+                if attempt < retry_limit:
+                    retry_count += 1
+                    await asyncio.sleep(min(2**attempt, 2))
             if result.get("success"):
                 indexed_ids.append(note.id)
             else:
                 failed_ids.append(note.id)
                 errors[note.id] = result.get("error", "Unknown indexing error")
 
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        status_text = "complete" if not failed_ids else "partial"
+        self._last_index_job.update(
+            {
+                "status": status_text,
+                "ended_at": self._now_iso(),
+                "duration_ms": elapsed_ms,
+                "indexed_count": len(indexed_ids),
+                "failed_count": len(failed_ids),
+                "retry_count": retry_count,
+                "errors": errors,
+            }
+        )
+        self._index_metrics["runs"] += 1
+        self._index_metrics["indexed_total"] += len(indexed_ids)
+        self._index_metrics["failed_total"] += len(failed_ids)
+        self._index_metrics["retry_total"] += retry_count
+        self._index_metrics["last_duration_ms"] = elapsed_ms
+        self._append_event(
+            "index",
+            status_text,
+            {
+                "job_id": job_id,
+                "indexed_count": len(indexed_ids),
+                "failed_count": len(failed_ids),
+                "retry_count": retry_count,
+                "duration_ms": elapsed_ms,
+            },
+        )
+
         return {
             "indexed_count": len(indexed_ids),
             "failed_count": len(failed_ids),
+            "retry_count": retry_count,
             "indexed_ids": indexed_ids,
             "failed_ids": failed_ids,
             "errors": errors,
-            "status": "complete" if not failed_ids else "partial",
+            "status": status_text,
             "message": f"Indexed {len(indexed_ids)} notes, {len(failed_ids)} failed",
         }
 
@@ -287,70 +406,92 @@ class RAGService:
     ) -> dict[str, Any]:
         """Query the indexed knowledge base and return grounded sources."""
         started = time.perf_counter()
-        self._ensure_ready()
-        assert self._provider is not None
-        assert self._vector_store is not None
+        try:
+            self._ensure_ready()
+            assert self._provider is not None
+            assert self._vector_store is not None
 
-        query_embedding = (await self._provider.embed_texts([query_text]))[0]
-        matches = self._vector_store.search(query_embedding, top_k=top_k)
+            query_embedding = (await self._provider.embed_texts([query_text]))[0]
+            matches = self._vector_store.search(
+                query_embedding,
+                top_k=top_k,
+                query_text=query_text,
+            )
 
-        if not matches:
+            if not matches:
+                elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+                self._record_query_success(elapsed_ms)
+                self._append_event(
+                    "query",
+                    "empty",
+                    {"elapsed_ms": elapsed_ms, "top_k": top_k},
+                )
+                return {
+                    "query": query_text,
+                    "answer": "No relevant indexed notes were found for this question.",
+                    "sources": [],
+                    "mode": mode,
+                    "engine": self._engine,
+                    "provider": self._provider.status.provider,
+                    "elapsed_ms": elapsed_ms,
+                    "mock": False,
+                }
+
+            context = "\n\n".join(
+                f"[{idx}] {item['title']} (note_id={item['note_id']})\n{item['text']}"
+                for idx, item in enumerate(matches, 1)
+            )
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are SecondBrain RAG. Answer only from the provided "
+                        "notes. If the notes are insufficient, say what is missing. "
+                        "Cite sources inline like [1], [2]."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Question:\n{query_text}\n\nNotes:\n{context}",
+                },
+            ]
+            answer = await self._provider.chat(messages, temperature=0.1)
+
+            sources = [
+                {
+                    "id": item["note_id"],
+                    "note_id": item["note_id"],
+                    "chunk_id": item["id"],
+                    "title": item["title"],
+                    "snippet": item["snippet"],
+                    "relevance": item["relevance"],
+                    "score": item["score"],
+                    "chunk_index": item["chunk_index"],
+                    "source_url": item["source_url"],
+                }
+                for item in matches
+            ]
+
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+            self._record_query_success(elapsed_ms)
+            self._append_event(
+                "query",
+                "complete",
+                {"elapsed_ms": elapsed_ms, "sources_count": len(sources), "top_k": top_k},
+            )
             return {
                 "query": query_text,
-                "answer": "No relevant indexed notes were found for this question.",
-                "sources": [],
+                "answer": answer,
+                "sources": sources,
                 "mode": mode,
                 "engine": self._engine,
                 "provider": self._provider.status.provider,
-                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                "elapsed_ms": elapsed_ms,
                 "mock": False,
             }
-
-        context = "\n\n".join(
-            f"[{idx}] {item['title']} (note_id={item['note_id']})\n{item['text']}"
-            for idx, item in enumerate(matches, 1)
-        )
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are SecondBrain RAG. Answer only from the provided "
-                    "notes. If the notes are insufficient, say what is missing. "
-                    "Cite sources inline like [1], [2]."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Question:\n{query_text}\n\nNotes:\n{context}",
-            },
-        ]
-        answer = await self._provider.chat(messages, temperature=0.1)
-
-        sources = [
-            {
-                "id": item["note_id"],
-                "note_id": item["note_id"],
-                "chunk_id": item["id"],
-                "title": item["title"],
-                "snippet": item["snippet"],
-                "relevance": item["relevance"],
-                "score": item["score"],
-                "chunk_index": item["chunk_index"],
-                "source_url": item["source_url"],
-            }
-            for item in matches
-        ]
-
-        return {
-            "query": query_text,
-            "answer": answer,
-            "sources": sources,
-            "mode": mode,
-            "engine": self._engine,
-            "provider": self._provider.status.provider,
-            "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-            "mock": False,
-        }
+        except Exception as exc:
+            self._record_query_failure(started, exc)
+            raise
 
     async def delete_document(self, note_id: str) -> bool:
         """Delete a note from vector and optional LightRAG indexes."""
@@ -381,6 +522,29 @@ class RAGService:
             "mock": False,
             "lightrag_available": self._lightrag_available,
             "lightrag_ready": self._lightrag is not None,
+            "operations": {
+                "last_index_job": self._last_index_job,
+                "recent_events": self._recent_events,
+            },
+            "metrics": {
+                "index": self._index_metrics,
+                "query": {
+                    **self._query_metrics,
+                    "average_latency_ms": (
+                        round(
+                            self._query_metrics["total_latency_ms"]
+                            / self._query_metrics["count"],
+                            2,
+                        )
+                        if self._query_metrics["count"]
+                        else None
+                    ),
+                },
+                "cost": {
+                    "available": False,
+                    "reason": "Provider token usage is not returned by the current wrapper",
+                },
+            },
         }
         if provider_status:
             stats["provider"] = {

@@ -90,6 +90,7 @@ async def index_notes(
     return RAGIndexResponse(
         indexed_count=result.get("indexed_count", 0),
         failed_count=result.get("failed_count", 0),
+        retry_count=result.get("retry_count", 0),
         status=result.get("status", "complete"),
         message=result.get("message", ""),
         indexed_ids=result.get("indexed_ids", []),
@@ -146,6 +147,7 @@ async def reindex_rag_document(
     return RAGIndexResponse(
         indexed_count=result.get("indexed_count", 0),
         failed_count=result.get("failed_count", 0),
+        retry_count=result.get("retry_count", 0),
         status=result.get("status", "complete"),
         message=result.get("message", ""),
         indexed_ids=result.get("indexed_ids", []),
@@ -163,6 +165,7 @@ async def rebuild_rag_index(
     return RAGIndexResponse(
         indexed_count=result.get("indexed_count", 0),
         failed_count=result.get("failed_count", 0),
+        retry_count=result.get("retry_count", 0),
         status=result.get("status", "complete"),
         message=result.get("message", ""),
         indexed_ids=result.get("indexed_ids", []),

@@ -20,9 +20,13 @@ secrets/
 *.secret
 
 # RAG runtime artifacts
+.tmp/
+memory/
 rag_data/
 backend/rag_data/
 tests/RAG_LIVE_REPORT*.json
+tests/RAG_FAKE_PROVIDER_REPORT*.json
+.tmp/RAG_*_REPORT*.json
 
 # Python
 __pycache__/

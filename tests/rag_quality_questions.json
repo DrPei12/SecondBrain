@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "description": "SecondBrain RAG release-quality evaluation questions. These are intentionally source-hinted so the smoke gate can validate retrieval grounding as well as non-mock answers.",
+  "queries": [
+    {
+      "id": "agent-learning-directions",
+      "category": "agent_learning",
+      "query": "Agent 学习规划主要讲了哪些学习方向？",
+      "source_hint": "Agent 学习规划",
+      "answer_contains_any": ["单 Agent", "多 Agent", "Workflow"]
+    },
+    {
+      "id": "agent-week-one",
+      "category": "agent_learning",
+      "query": "Agent 学习规划第一周建议学习什么？",
+      "source_hint": "Agent 学习规划",
+      "answer_contains_any": ["单 Agent", "基础"]
+    },
+    {
+      "id": "agent-frameworks",
+      "category": "agent_learning",
+      "query": "Agent 学习规划里比较了哪些多智能体框架？",
+      "source_hint": "Agent 学习规划",
+      "answer_contains_any": ["AutoGen", "CrewAI", "LangGraph"]
+    },
+    {
+      "id": "openclaw-raspberry-steps",
+      "category": "technical_tutorial",
+      "query": "在树莓派部署 OpenClaw 的关键步骤是什么？",
+      "source_hint": "OpenClaw",
+      "answer_contains_any": ["SSH", "Node.js", "npm"]
+    },
+    {
+      "id": "openclaw-onboarding",
+      "category": "technical_tutorial",
+      "query": "OpenClaw 安装后的 onboarding 需要做哪些选择？",
+      "source_hint": "OpenClaw",
+      "answer_contains_any": ["QuickStart", "模型", "API"]
+    },
+    {
+      "id": "scrum-flow",
+      "category": "product_workflow",
+      "query": "外企敏捷研发 Scrum 的核心流程是什么？",
+      "source_hint": "Scrum",
+      "answer_contains_any": ["Sprint", "Planning", "Daily"]
+    },
+    {
+      "id": "scrum-roles",
+      "category": "product_workflow",
+      "query": "Scrum 里 Product Owner、Scrum Master 和研发团队分别负责什么？",
+      "source_hint": "Scrum",
+      "answer_contains_any": ["Product Owner", "Scrum Master", "Development"]
+    },
+    {
+      "id": "ai-pm-differences",
+      "category": "product_management",
+      "query": "AI 产品经理与传统产品经理的主要差异有哪些？",
+      "source_hint": "AI 产品经理",
+      "answer_contains_any": ["数据", "模型", "算法"]
+    },
+    {
+      "id": "ai-pm-capability-model",
+      "category": "product_management",
+      "query": "AI 产品经理能力模型强调哪些维度？",
+      "source_hint": "AI 产品经理",
+      "answer_contains_any": ["业务", "技术", "数据"]
+    },
+    {
+      "id": "foreign-ai-pm-site",
+      "category": "product_management",
+      "query": "外企AI产品经理实习学习资料网站包含哪些学习资料？",
+      "source_hint": "外企AI产品经理",
+      "answer_contains_any": ["AI", "产品经理", "学习"]
+    },
+    {
+      "id": "swarm-core",
+      "category": "agent_architecture",
+      "query": "Swarm 多智能体架构的核心思想是什么？",
+      "source_hint": "Swarm",
+      "answer_contains_any": ["handoff", "交接", "多智能体"]
+    },
+    {
+      "id": "swarm-vs-crewai",
+      "category": "agent_architecture",
+      "query": "Swarm 与 CrewAI 或 AutoGen 的协作方式有什么差异？",
+      "source_hint": "Swarm",
+      "answer_contains_any": ["交接", "管理者", "协作"]
+    },
+    {
+      "id": "memory-long-term",
+      "category": "memory",
+      "query": "MEMORY.md 长期记忆主要记录了哪些类型的信息？",
+      "source_hint": "MEMORY.md",
+      "answer_contains_any": ["Memory", "Long-Term", "记忆"]
+    },
+    {
+      "id": "daily-summary-0307",
+      "category": "daily_notes",
+      "query": "2026-03-07 工作日终总结里有哪些重点？",
+      "source_hint": "2026-03-07",
+      "answer_contains_any": ["总结", "工作", "重点"]
+    },
+    {
+      "id": "feb25-note",
+      "category": "daily_notes",
+      "query": "2026-02-25 的笔记主要记录了什么？",
+      "source_hint": "2026-02-25",
+      "answer_contains_any": ["2026-02-25"]
+    },
+    {
+      "id": "feb21-note",
+      "category": "daily_notes",
+      "query": "2026-02-21 相关笔记里出现了哪些事项？",
+      "source_hint": "2026-02-21",
+      "answer_contains_any": ["2026-02-21"]
+    },
+    {
+      "id": "heartbeat-error",
+      "category": "operations",
+      "query": "2026-02-28 heartbeat connection error 笔记记录了什么问题？",
+      "source_hint": "heartbeat",
+      "answer_contains_any": ["connection", "error", "heartbeat"]
+    },
+    {
+      "id": "session-startup",
+      "category": "operations",
+      "query": "2026-03-02 session startup 笔记主要说明了什么？",
+      "source_hint": "session-startup",
+      "answer_contains_any": ["session", "startup"]
+    },
+    {
+      "id": "openclaw-related-notes",
+      "category": "technical_tutorial",
+      "query": "哪些笔记和 OpenClaw 或树莓派部署有关？",
+      "source_hint": "OpenClaw",
+      "answer_contains_any": ["OpenClaw", "树莓派"]
+    },
+    {
+      "id": "agent-production-safety",
+      "category": "agent_learning",
+      "query": "Agent 学习规划里提到的生产实践和安全风险有哪些？",
+      "source_hint": "Agent 学习规划",
+      "answer_contains_any": ["Prompt 注入", "工具", "成本"]
+    }
+  ]
+}

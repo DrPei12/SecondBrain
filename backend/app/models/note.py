@@ -3,7 +3,7 @@ SQLAlchemy model for Notes (Notion-lite structure)
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, Enum, Index
+from sqlalchemy import Column, String, Text, DateTime, Index
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import relationship
 import enum
@@ -51,10 +51,10 @@ class Note(Base):
     
     # Workflow status
     status = Column(
-        Enum(NoteStatus, name="note_status", create_constraint=False),
-        default=NoteStatus.INBOX,
+        String(20),
+        default=NoteStatus.INBOX.value,
         nullable=False,
-        index=True
+        index=True,
     )
     
     # RAG indexing status
@@ -81,7 +81,15 @@ class Note(Base):
             "source_url": self.source_url,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "status": self.status.value if isinstance(self.status, NoteStatus) else self.status,
+            "status": (
+                self.status.value
+                if isinstance(self.status, NoteStatus)
+                else (
+                    NoteStatus[self.status].value
+                    if isinstance(self.status, str) and self.status in NoteStatus.__members__
+                    else self.status
+                )
+            ),
             "indexed_for_rag": self.indexed_for_rag,
         }
 

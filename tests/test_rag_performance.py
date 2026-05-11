@@ -46,6 +46,29 @@ DEFAULT_QUERIES = [
 ]
 
 
+def load_queries(path_value: str) -> list[dict[str, Any]]:
+    if not path_value:
+        return DEFAULT_QUERIES
+
+    path = Path(path_value)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        raw = raw.get("queries", [])
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"No RAG quality queries found in {path}")
+
+    queries: list[dict[str, Any]] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"Query item #{index + 1} is not an object")
+        query = str(item.get("query", "")).strip()
+        source_hint = str(item.get("source_hint", "")).strip()
+        if not query or not source_hint:
+            raise ValueError(f"Query item #{index + 1} requires query and source_hint")
+        queries.append(item)
+    return queries
+
+
 def _env_file_candidates() -> list[Path]:
     env_file = os.getenv("SECOND_BRAIN_ENV_FILE", "").strip()
     candidates = []
@@ -218,9 +241,16 @@ def build_preflight_report(explicit_api_key: str = "") -> dict[str, Any]:
 
 
 class ProductRAGSmoke:
-    def __init__(self, api_base: str, api_key: str, timeout: int) -> None:
+    def __init__(
+        self,
+        api_base: str,
+        api_key: str,
+        timeout: int,
+        require_source_hints: bool,
+    ) -> None:
         self.api_base = api_base.rstrip("/")
         self.timeout = timeout
+        self.require_source_hints = require_source_hints
         self.headers = {
             "X-API-Key": api_key,
             "Content-Type": "application/json",
@@ -286,7 +316,9 @@ class ProductRAGSmoke:
         if failures:
             raise AssertionError("; ".join(failures))
 
-    def query(self, query: str, source_hint: str) -> dict[str, Any]:
+    def query(self, item: dict[str, Any]) -> dict[str, Any]:
+        query = str(item["query"])
+        source_hint = str(item["source_hint"])
         started = time.perf_counter()
         response = self.request(
             "POST",
@@ -301,8 +333,41 @@ class ProductRAGSmoke:
         sources = data.get("sources", [])
         source_titles = [source.get("title", "") for source in sources]
         hinted = any(source_hint.lower() in title.lower() for title in source_titles)
+        answer_contains_any = [
+            str(value).strip()
+            for value in item.get("answer_contains_any", [])
+            if str(value).strip()
+        ]
+        answer_contains_all = [
+            str(value).strip()
+            for value in item.get("answer_contains_all", [])
+            if str(value).strip()
+        ]
+        contains_any_ok = (
+            True
+            if not answer_contains_any
+            else any(value.lower() in answer.lower() for value in answer_contains_any)
+        )
+        contains_all_ok = all(value.lower() in answer.lower() for value in answer_contains_all)
+        failure_reasons = []
+        if not answer:
+            failure_reasons.append("empty_answer")
+        if data.get("mock"):
+            failure_reasons.append("mock_response")
+        if "[Mock]" in answer:
+            failure_reasons.append("mock_marker_in_answer")
+        if not sources:
+            failure_reasons.append("missing_sources")
+        if self.require_source_hints and not hinted:
+            failure_reasons.append("source_hint_not_found")
+        if not contains_any_ok:
+            failure_reasons.append("answer_missing_any_expected_term")
+        if not contains_all_ok:
+            failure_reasons.append("answer_missing_required_terms")
 
         result = {
+            "id": item.get("id"),
+            "category": item.get("category"),
             "query": query,
             "source_hint": source_hint,
             "elapsed_ms": elapsed_ms,
@@ -310,12 +375,11 @@ class ProductRAGSmoke:
             "sources_count": len(sources),
             "source_titles": source_titles,
             "hinted_source_found": hinted,
+            "answer_contains_any_ok": contains_any_ok,
+            "answer_contains_all_ok": contains_all_ok,
+            "failure_reasons": failure_reasons,
             "mock": bool(data.get("mock")),
-            "passed": bool(answer)
-            and not data.get("mock")
-            and "[Mock]" not in answer
-            and len(sources) > 0
-            and hinted,
+            "passed": len(failure_reasons) == 0,
         }
         self.results.append(result)
         return result
@@ -327,10 +391,18 @@ class ProductRAGSmoke:
         self.validate_rebuild(rebuild)
 
         for item in queries:
-            self.query(item["query"], item["source_hint"])
+            self.query(item)
 
         passed = sum(1 for item in self.results if item["passed"])
         hinted = sum(1 for item in self.results if item["hinted_source_found"])
+        latencies = [item["elapsed_ms"] for item in self.results]
+        categories: dict[str, dict[str, int]] = {}
+        for item in self.results:
+            category = item.get("category") or "uncategorized"
+            current = categories.setdefault(category, {"total": 0, "passed": 0})
+            current["total"] += 1
+            if item["passed"]:
+                current["passed"] += 1
         return {
             "timestamp": datetime.now().isoformat(),
             "health": health,
@@ -340,6 +412,11 @@ class ProductRAGSmoke:
                 "passed": passed,
                 "hinted_source_found": hinted,
                 "all_passed": passed == len(self.results),
+                "average_latency_ms": (
+                    round(sum(latencies) / len(latencies), 2) if latencies else None
+                ),
+                "max_latency_ms": max(latencies) if latencies else None,
+                "categories": categories,
             },
             "results": self.results,
         }
@@ -352,6 +429,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--report")
+    parser.add_argument("--queries", help="Path to a JSON RAG quality query set")
+    parser.add_argument(
+        "--allow-missing-source-hints",
+        action="store_true",
+        help="Do not fail when source_hint is absent from retrieved titles.",
+    )
     args = parser.parse_args()
 
     if args.preflight:
@@ -363,8 +446,13 @@ def main() -> int:
     if not api_key:
         raise SystemExit("SECOND_BRAIN_API_KEY or --api-key is required")
 
-    suite = ProductRAGSmoke(args.api_base, api_key, args.timeout)
-    report = suite.run(DEFAULT_QUERIES)
+    suite = ProductRAGSmoke(
+        args.api_base,
+        api_key,
+        args.timeout,
+        require_source_hints=not args.allow_missing_source_hints,
+    )
+    report = suite.run(load_queries(args.queries or ""))
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
     if args.report:

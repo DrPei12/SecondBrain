@@ -66,6 +66,7 @@ class RAGIndexResponse(BaseModel):
     """Schema for RAG indexing response"""
     indexed_count: int
     failed_count: int
+    retry_count: int = 0
     status: str
     message: str
     indexed_ids: List[str] = Field(default_factory=list)

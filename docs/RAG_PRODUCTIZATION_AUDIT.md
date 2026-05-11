@@ -78,6 +78,8 @@ Expected acceptance evidence:
 - `health.status == "ready"`
 - provider name is `bailian`
 - LLM model is `qwen3.6-plus`
+- Release hardening and repeatable release gates are tracked in
+  `docs/RAG_RELEASE_HARDENING.md`.
 - `thinking_enabled == false`
 - embedding model is `text-embedding-v4`
 - rebuild indexes existing notes with `failed_count == 0`

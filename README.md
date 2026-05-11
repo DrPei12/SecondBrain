@@ -123,7 +123,7 @@ cp .env.example .env
 # Required private values. Do not commit .env.
 SECOND_BRAIN_API_KEY=dev-api-key
 LLM_PROVIDER=bailian
-DASHSCOPE_API_KEY=your-dashscope-key
+DASHSCOPE_API_KEY=<your-dashscope-key>
 # Or keep the key in a local file excluded from git:
 # DASHSCOPE_API_KEY_FILE=.secrets/dashscope.key
 BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1

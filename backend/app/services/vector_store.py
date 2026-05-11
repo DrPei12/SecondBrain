@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+_DATE_TOKEN_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:-\d{4})?")
+_WORD_TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_.:+-]{2,}")
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -29,6 +34,35 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 def _clip_relevance(score: float) -> float:
     return max(0.0, min(1.0, (score + 1.0) / 2.0))
+
+
+def _lexical_score(query_text: str, chunk: dict[str, Any]) -> float:
+    """Small exact-match boost for titles, dates, and product identifiers."""
+    if not query_text:
+        return 0.0
+
+    query = query_text.casefold()
+    title = str(chunk.get("title") or "").casefold()
+    text = str(chunk.get("text") or "").casefold()
+    score = 0.0
+
+    for token in set(_DATE_TOKEN_RE.findall(query)):
+        if token in title:
+            score += 0.35
+        elif token in text:
+            score += 0.12
+
+    for token in set(_WORD_TOKEN_RE.findall(query)):
+        token = token.casefold()
+        if token in title:
+            score += 0.12
+        elif token in text:
+            score += 0.03
+
+    if title and title in query:
+        score += 0.25
+
+    return min(score, 0.75)
 
 
 def chunk_note_text(
@@ -157,11 +191,19 @@ class JsonVectorStore:
             self.save()
         return removed
 
-    def search(self, query_embedding: list[float], *, top_k: int) -> list[dict[str, Any]]:
+    def search(
+        self,
+        query_embedding: list[float],
+        *,
+        top_k: int,
+        query_text: str = "",
+    ) -> list[dict[str, Any]]:
         scored: list[dict[str, Any]] = []
         for chunk in self._data.get("chunks", []):
             embedding = chunk.get("embedding") or []
-            score = _cosine_similarity(query_embedding, embedding)
+            vector_score = _cosine_similarity(query_embedding, embedding)
+            lexical_score = _lexical_score(query_text, chunk)
+            score = vector_score + lexical_score
             scored.append(
                 {
                     "id": chunk["id"],
@@ -173,6 +215,8 @@ class JsonVectorStore:
                     "source_url": chunk.get("source_url"),
                     "chunk_index": chunk.get("chunk_index", 0),
                     "score": score,
+                    "vector_score": vector_score,
+                    "lexical_score": lexical_score,
                     "relevance": _clip_relevance(score),
                 }
             )
@@ -182,6 +226,7 @@ class JsonVectorStore:
     def stats(self) -> dict[str, Any]:
         chunks = self._data.get("chunks", [])
         note_ids = {chunk.get("note_id") for chunk in chunks if chunk.get("note_id")}
+        file_stat = self.path.stat() if self.path.exists() else None
         return {
             "path": str(self.path),
             "embedding_model": self.embedding_model,
@@ -189,4 +234,10 @@ class JsonVectorStore:
             "chunk_count": len(chunks),
             "document_count": len(note_ids),
             "exists": self.path.exists(),
+            "file_size_bytes": file_stat.st_size if file_stat else 0,
+            "updated_at": (
+                datetime.utcfromtimestamp(file_stat.st_mtime).isoformat()
+                if file_stat
+                else None
+            ),
         }
