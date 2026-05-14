@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "1600"))
     RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
     RAG_INDEX_RETRIES: int = int(os.getenv("RAG_INDEX_RETRIES", "1"))
+    RAG_UPLOAD_DIR: str = os.getenv("RAG_UPLOAD_DIR", "./rag_uploads")
+    RAG_MAX_UPLOAD_BYTES: int = int(os.getenv("RAG_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+    RAG_MAX_EXTRACTED_CHARS: int = int(os.getenv("RAG_MAX_EXTRACTED_CHARS", "200000"))
     RAG_VECTOR_STORE_FILE: str = os.getenv(
         "RAG_VECTOR_STORE_FILE",
         "./rag_data/vector_store.json"

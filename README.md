@@ -85,6 +85,7 @@ RESTful API endpoints for external AI Agents:
 - `PUT /api/notes/{id}` - Update note
 - `DELETE /api/notes/{id}` - Delete note
 - `POST /api/rag/query` - RAG Q&A query
+- `POST /api/rag/ingest` - Ingest a file as a modality-aware note
 - `POST /api/rag/index` - Index notes for RAG
 
 ## Getting Started
@@ -151,11 +152,20 @@ SECOND_BRAIN_API_KEY=dev-api-key python tests/test_rag_performance.py
 REST API:
 
 - `POST /api/rag/query` returns `answer`, `sources`, `provider`, `engine`, `elapsed_ms`, and `mock=false`.
+- `POST /api/rag/ingest` accepts multipart `file`, optional `title`, `caption`, `tags`, and `source_url`, then creates and indexes a modality-aware note.
 - `POST /api/rag/index` indexes pending notes or requested note IDs.
 - `POST /api/rag/rebuild` rebuilds the full local vector index from notes.
 - `POST /api/rag/document/{note_id}/reindex` reindexes one note.
 - `DELETE /api/rag/document/{note_id}` removes one note from the RAG index.
 - `GET /api/rag/health` and `GET /api/health/ready` expose real readiness.
+
+Multimodal ingestion follows a RAG-Anything-inspired pipeline: files are parsed
+into modality-aware textual representations, tagged with `modality:*`, and then
+indexed by the existing vector RAG path. Current supported inputs include
+plain text, Markdown, HTML, JSON, code files, CSV/TSV/XLSX tables, PDF, DOCX,
+PPTX, images, audio, and video. Images/audio/video are searchable through
+metadata plus user-supplied captions or transcripts unless a dedicated OCR,
+ASR, or VLM captioning layer is added later.
 
 The local vector store lives at `RAG_VECTOR_STORE_FILE` and is regenerated when
 the configured embedding model or dimension changes.

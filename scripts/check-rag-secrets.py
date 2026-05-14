@@ -19,6 +19,7 @@ ALLOWLIST_MARKERS = (
     "sk_xxx",
     "<your",
     "example",
+    "fake-provider-key",
 )
 
 

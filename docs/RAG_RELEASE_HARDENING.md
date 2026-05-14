@@ -72,6 +72,7 @@ Live acceptance requires:
 - `mock=false`
 - grounded sources are returned
 - source hints are found
+- modality metadata is preserved for files ingested through `/api/rag/ingest`
 
 ## 3. Quality Evaluation
 
@@ -110,6 +111,24 @@ The Ask page should expose release-critical state without requiring a terminal:
 - mock warning
 - empty-source warning
 - expandable grounded sources
+- file ingestion for text, tables, documents, and media captions
+
+## 4.1 Multimodal Ingestion Scope
+
+SecondBrain follows the RAG-Anything pattern of parsing files into
+modality-aware content units before indexing. The current implementation keeps
+the storage model note-backed:
+
+- text, Markdown, HTML, JSON, and code files are indexed as text
+- CSV, TSV, and XLSX files are rendered as markdown tables
+- PDF, DOCX, and PPTX files are parsed through Python document parsers
+- images are indexed by metadata plus optional user captions
+- audio and video are indexed by metadata plus optional transcripts
+- LaTeX-style equations inside text are tagged as `modality:equation`
+
+This is not yet full native visual/audio reasoning. Add OCR, ASR, and VLM
+captioning before treating image, audio, or video retrieval as semantic content
+coverage.
 
 ## 5. Operations
 

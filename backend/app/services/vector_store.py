@@ -65,6 +65,17 @@ def _lexical_score(query_text: str, chunk: dict[str, Any]) -> float:
     return min(score, 0.75)
 
 
+def _modalities_from_tags(tags: list[str] | None) -> list[str]:
+    modalities = []
+    for tag in tags or []:
+        value = str(tag).strip()
+        if value.lower().startswith("modality:"):
+            modality = value.split(":", 1)[1].strip().lower()
+            if modality:
+                modalities.append(modality)
+    return sorted(set(modalities)) or ["text"]
+
+
 def chunk_note_text(
     title: str,
     content: str,
@@ -162,6 +173,8 @@ class JsonVectorStore:
 
         self.delete_note(note_id, save=False)
         now = datetime.utcnow().isoformat()
+        modalities = _modalities_from_tags(tags)
+        primary_modality = modalities[0] if len(modalities) == 1 else "mixed"
         for index, (text, embedding) in enumerate(zip(chunks, embeddings)):
             self._data["chunks"].append(
                 {
@@ -170,6 +183,8 @@ class JsonVectorStore:
                     "title": title,
                     "text": text,
                     "tags": tags or [],
+                    "modality": primary_modality,
+                    "modalities": modalities,
                     "source_url": source_url,
                     "chunk_index": index,
                     "embedding": embedding,
@@ -212,6 +227,8 @@ class JsonVectorStore:
                     "snippet": chunk.get("text", "")[:700],
                     "text": chunk.get("text", ""),
                     "tags": chunk.get("tags") or [],
+                    "modality": chunk.get("modality") or "text",
+                    "modalities": chunk.get("modalities") or [chunk.get("modality") or "text"],
                     "source_url": chunk.get("source_url"),
                     "chunk_index": chunk.get("chunk_index", 0),
                     "score": score,

@@ -24,6 +24,8 @@ secrets/
 memory/
 rag_data/
 backend/rag_data/
+rag_uploads/
+backend/rag_uploads/
 tests/RAG_LIVE_REPORT*.json
 tests/RAG_FAKE_PROVIDER_REPORT*.json
 .tmp/RAG_*_REPORT*.json

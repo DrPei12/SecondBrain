@@ -438,7 +438,9 @@ class RAGService:
                 }
 
             context = "\n\n".join(
-                f"[{idx}] {item['title']} (note_id={item['note_id']})\n{item['text']}"
+                f"[{idx}] {item['title']} "
+                f"(note_id={item['note_id']}, modalities={', '.join(item.get('modalities') or [])})"
+                f"\n{item['text']}"
                 for idx, item in enumerate(matches, 1)
             )
             messages = [
@@ -464,6 +466,8 @@ class RAGService:
                     "chunk_id": item["id"],
                     "title": item["title"],
                     "snippet": item["snippet"],
+                    "modality": item.get("modality"),
+                    "modalities": item.get("modalities") or [],
                     "relevance": item["relevance"],
                     "score": item["score"],
                     "chunk_index": item["chunk_index"],

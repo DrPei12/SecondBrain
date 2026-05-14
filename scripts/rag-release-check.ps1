@@ -29,7 +29,20 @@ if (-not $SkipSecretScan) {
 
 if (-not $ServerPython) {
     $venvPython = Join-Path $ProjectRoot ".tmp\winvenv\Scripts\python.exe"
-    $ServerPython = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { $Python }
+    $ServerPython = $Python
+    if (Test-Path -LiteralPath $venvPython) {
+        $oldErrorActionPreference = $ErrorActionPreference
+        $oldNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $venvPython -c "import fastapi, uvicorn, multipart" *> $null
+        $venvCheckExitCode = $LASTEXITCODE
+        $PSNativeCommandUseErrorActionPreference = $oldNativeErrorPreference
+        $ErrorActionPreference = $oldErrorActionPreference
+        if ($venvCheckExitCode -eq 0) {
+            $ServerPython = $venvPython
+        }
+    }
 }
 
 $apiBase = "http://127.0.0.1:$BackendPort/api"

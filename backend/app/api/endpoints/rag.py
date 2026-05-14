@@ -1,21 +1,34 @@
 """
 RAG API endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.connection import get_db
+from app.schemas.note import NoteCreate
 from app.services.rag_service import rag_service
+from app.services.note_service import note_service
+from app.services.multimodal_ingest import multimodal_ingestion_service
 from app.schemas.rag import (
     RAGQueryRequest,
     RAGQueryResponse,
     RAGIndexRequest,
-    RAGIndexResponse
+    RAGIndexResponse,
+    RAGIngestResponse,
 )
 
 
 router = APIRouter()
+
+
+def _parse_tags(tags: str | None) -> list[str]:
+    values = []
+    for tag in (tags or "").split(","):
+        value = tag.strip()
+        if value and value not in values:
+            values.append(value)
+    return values
 
 
 @router.post("/query", response_model=RAGQueryResponse)
@@ -96,6 +109,74 @@ async def index_notes(
         indexed_ids=result.get("indexed_ids", []),
         failed_ids=result.get("failed_ids", []),
         errors=result.get("errors", {}),
+    )
+
+
+@router.post("/ingest", response_model=RAGIngestResponse)
+async def ingest_multimodal_document(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    caption: str = Form(""),
+    tags: str = Form(""),
+    source_url: str = Form(""),
+    index: bool = Form(True),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Ingest a file as a modality-aware note, then optionally index it for RAG.
+
+    Supported extraction is intentionally layered:
+    - text/markdown/html/json/code files become text chunks
+    - csv/xlsx become markdown table chunks
+    - pdf/docx/pptx use optional Python parsers when installed
+    - images/audio/video store metadata and user captions for retrieval
+    """
+    try:
+        document = await multimodal_ingestion_service.ingest_upload(
+            file,
+            title=title,
+            caption=caption,
+        )
+    except ValueError as exc:
+        status_code = (
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+            if "RAG_MAX_UPLOAD_BYTES" in str(exc)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    note_tags = _parse_tags(tags)
+    for tag in document.tags:
+        if tag not in note_tags:
+            note_tags.append(tag)
+
+    note = await note_service.create_note(
+        db,
+        NoteCreate(
+            title=document.title,
+            content=document.content,
+            tags=note_tags,
+            source_url=source_url.strip() or document.source_url,
+        ),
+    )
+
+    index_result = {}
+    if index:
+        try:
+            index_result = await rag_service.index_note(
+                db,
+                note_id=note.id,
+                title=note.title,
+                content=note.content or "",
+            )
+        except RuntimeError as exc:
+            index_result = {"success": False, "error": str(exc)}
+
+    return RAGIngestResponse(
+        note=note.to_dict(),
+        indexed=bool(index_result.get("success")),
+        index_result=index_result,
+        document=document.response_metadata(),
     )
 
 

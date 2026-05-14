@@ -10,10 +10,12 @@ import {
   CheckCircle2,
   Clock,
   Database,
+  FileText,
   RefreshCw,
   Send,
   Server,
   Sparkles,
+  Upload,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -25,6 +27,8 @@ interface Source {
   chunk_id?: string;
   title: string;
   snippet?: string;
+  modality?: string | null;
+  modalities?: string[];
   relevance: number;
   source_url?: string | null;
 }
@@ -90,6 +94,18 @@ interface RebuildResult {
   message: string;
 }
 
+interface IngestResult {
+  note?: {
+    id: string;
+    title: string;
+  };
+  indexed?: boolean;
+  document?: {
+    modalities?: string[];
+    warnings?: string[];
+  };
+}
+
 const formatMs = (value?: number | null) =>
   typeof value === 'number' ? `${Math.round(value)}ms` : 'n/a';
 
@@ -102,6 +118,11 @@ export default function AskAI() {
   const [loading, setLoading] = useState(false);
   const [healthLoading, setHealthLoading] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [ingestTitle, setIngestTitle] = useState('');
+  const [ingestCaption, setIngestCaption] = useState('');
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestResult, setIngestResult] = useState<IngestResult | null>(null);
 
   const loadHealth = async () => {
     setHealthLoading(true);
@@ -191,6 +212,39 @@ export default function AskAI() {
       setError(e instanceof Error ? e.message : 'RAG rebuild failed.');
     } finally {
       setRebuilding(false);
+    }
+  };
+
+  const handleIngest = async () => {
+    if (!file) return;
+    setIngesting(true);
+    setError(null);
+    setIngestResult(null);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      form.set('title', ingestTitle);
+      form.set('caption', ingestCaption);
+      form.set('tags', 'upload');
+      form.set('index', 'true');
+      const res = await apiFetch('/api/rag/ingest', {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.detail || 'File ingest failed.');
+        return;
+      }
+      setIngestResult(data);
+      setFile(null);
+      setIngestTitle('');
+      setIngestCaption('');
+      await loadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'File ingest failed.');
+    } finally {
+      setIngesting(false);
     }
   };
 
@@ -285,6 +339,62 @@ export default function AskAI() {
         )}
 
         <section className="mb-6 rounded-lg border border-gray-200 bg-white p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-900">
+              <Upload className="h-4 w-4 text-white" />
+            </div>
+            <h2 className="font-semibold text-gray-900">Ingest</h2>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+            <label className="flex min-h-24 cursor-pointer items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600 hover:bg-gray-100">
+              <input
+                type="file"
+                className="sr-only"
+                onChange={(event) => setFile(event.target.files?.[0] || null)}
+              />
+              <span className="inline-flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                {file ? file.name : 'Select file'}
+              </span>
+            </label>
+            <div className="space-y-3">
+              <input
+                value={ingestTitle}
+                onChange={(event) => setIngestTitle(event.target.value)}
+                placeholder="Title"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-900"
+              />
+              <input
+                value={ingestCaption}
+                onChange={(event) => setIngestCaption(event.target.value)}
+                placeholder="Caption or transcript"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-900"
+              />
+              <button
+                onClick={handleIngest}
+                disabled={!file || ingesting}
+                className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Upload className="h-4 w-4" />
+                {ingesting ? 'Ingesting' : 'Ingest file'}
+              </button>
+            </div>
+          </div>
+          {ingestResult && (
+            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-semibold">{ingestResult.indexed ? 'Indexed' : 'Saved'}</span>
+                <span>{ingestResult.note?.title}</span>
+                <span>{ingestResult.document?.modalities?.join(', ') || 'text'}</span>
+              </div>
+              {!!ingestResult.document?.warnings?.length && (
+                <p className="mt-2 text-xs">{ingestResult.document.warnings.join(' ')}</p>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="mb-6 rounded-lg border border-gray-200 bg-white p-5">
           <textarea
             placeholder="Ask about your notes..."
             value={query}
@@ -369,6 +479,18 @@ export default function AskAI() {
                           {Math.round(source.relevance * 100)}%
                         </span>
                       </summary>
+                      {!!source.modalities?.length && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {source.modalities.map((modality) => (
+                            <span
+                              key={modality}
+                              className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
+                            >
+                              {modality}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {source.snippet && (
                         <p className="mt-3 text-sm leading-6 text-gray-600">{source.snippet}</p>
                       )}

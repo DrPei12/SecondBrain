@@ -32,6 +32,8 @@ class RAGSource(BaseModel):
     chunk_id: Optional[str] = None
     title: str
     snippet: str = ""
+    modality: Optional[str] = None
+    modalities: List[str] = Field(default_factory=list)
     relevance: float = Field(default=0.0, ge=0.0, le=1.0)
     score: Optional[float] = None
     chunk_index: Optional[int] = None
@@ -72,3 +74,23 @@ class RAGIndexResponse(BaseModel):
     indexed_ids: List[str] = Field(default_factory=list)
     failed_ids: List[str] = Field(default_factory=list)
     errors: dict = Field(default_factory=dict)
+
+
+class RAGIngestedDocument(BaseModel):
+    """Metadata for a multimodal file ingested into note-backed RAG."""
+    original_filename: str
+    stored_name: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    modalities: List[str] = Field(default_factory=list)
+    source_url: str
+    warnings: List[str] = Field(default_factory=list)
+
+
+class RAGIngestResponse(BaseModel):
+    """Response for file-to-note multimodal ingestion."""
+    note: dict
+    indexed: bool
+    index_result: dict = Field(default_factory=dict)
+    document: RAGIngestedDocument
